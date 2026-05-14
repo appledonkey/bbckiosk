@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { hashPin, verifyPin } from "./pin.js";
+import QRCode from "qrcode";
 
 // crypto.randomUUID is missing on older WebViews (Android < 12, iOS < 15.4).
 // crypto.getRandomValues has been available for a decade and is required anyway
@@ -26,6 +27,8 @@ const LOCKOUT_DURATION = 30000;
 const COOLDOWN_SECONDS = 60;
 const IDLE_TIMEOUT = 30000;
 const SUCCESS_DISPLAY = 3000;
+const PIN_REVEAL_DURATION = 30; // seconds
+const QR_OPTIONS = { width: 180, margin: 2, color: { dark: "#0b0b0b", light: "#ffffff" } };
 const BURN_IN_INTERVAL = 210000;
 const BURN_IN_RANGE = 6;
 const DAYS = ["sun","mon","tue","wed","thu","fri","sat"];
@@ -33,6 +36,17 @@ const DAY_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
 const OUT_REASONS = ["End of shift","Lunch","Break","Early departure","Other"];
 const IN_REASONS = ["Start of shift","Return from lunch","Return from break"];
+
+// Continuous scaling — one factor derived from the viewport drives every
+// dimension in the UI. Reference: iPad 10th gen portrait (820×1180) at scale 1.0.
+// Clamp [0.55, 2.0] prevents illegibility on tiny screens and absurdity on 4K.
+// The PWA manifest locks orientation to portrait; we don't try to handle landscape.
+function getScale() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const raw = Math.min(w / 820, h / 1180);
+  return Math.max(0.55, Math.min(2.0, raw));
+}
 
 const VIEWS = { PIN:"pin", ACTION:"action", SUCCESS:"success", ADMIN:"admin", ADMIN_LOGIN:"admin_login", PIN_SETUP:"pin_setup", SETUP:"setup" };
 const SETUP_STEPS = { WELCOME:"welcome", ADMIN_PIN:"admin_pin", ADMIN_PIN_CONFIRM:"admin_pin_confirm", ADD_EMPLOYEE:"add_employee", SHOW_TEMP_PIN:"show_temp_pin" };
@@ -189,9 +203,37 @@ function getExceptions(entries, employees) {
   return exc.sort((a,b)=>new Date(b.entry.timestamp)-new Date(a.entry.timestamp));
 }
 
+// ─── useScale hook ─────────────────────────────────────────────
+// Subscribes to viewport changes (resize, orientation) and returns the current
+// scale factor. Throttled via rAF — fires at most once per frame instead of
+// every pixel during a dev-tools drag-resize.
+
+function useScale() {
+  const [scale, setScale] = useState(getScale);
+  useEffect(() => {
+    console.log(`[scale] ${scale.toFixed(3)} @ ${window.innerWidth}×${window.innerHeight}`);
+  }, [scale]);
+  useEffect(() => {
+    let raf = null;
+    const update = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = null; setScale(getScale()); });
+    };
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+    };
+  }, []);
+  return scale;
+}
+
 // ─── Main Component ────────────────────────────────────────────
 
 export default function ClockInKiosk() {
+  const scale = useScale();
   const [now, setNow] = useState(new Date());
   const [view, setView] = useState(VIEWS.PIN);
   const [pin, setPin] = useState("");
@@ -216,12 +258,16 @@ export default function ClockInKiosk() {
   const [adminPin, setAdminPinState] = useState(null); // { salt, hash } | null until loaded
   const [adminTab, setAdminTab] = useState("team");
   const [adminNewName, setAdminNewName] = useState("");
+  const [adminNewEmail, setAdminNewEmail] = useState("");
+  const [adminNewPhone, setAdminNewPhone] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
   const [changingAdminPin, setChangingAdminPin] = useState(false);
   const [newAdminPinInput, setNewAdminPinInput] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editPhone, setEditPhone] = useState("");
   const [schedEditId, setSchedEditId] = useState(null);
   const [schedDraft, setSchedDraft] = useState(null);
   const [tempPinReveal, setTempPinReveal] = useState(null); // { name, pin } shown once after add/reset
@@ -385,6 +431,19 @@ export default function ClockInKiosk() {
     const t=setInterval(()=>setBurnOffset({x:Math.floor(Math.random()*BURN_IN_RANGE*2)-BURN_IN_RANGE,y:Math.floor(Math.random()*BURN_IN_RANGE*2)-BURN_IN_RANGE}),BURN_IN_INTERVAL);
     return()=>clearInterval(t);
   },[]);
+
+  // Temp PIN reveal countdown — once revealed, ticks down to dismissed at 0.
+  useEffect(()=>{
+    if(!tempPinReveal?.revealed||tempPinReveal.dismissed) return;
+    const t=setInterval(()=>{
+      setTempPinReveal(prev=>{
+        if(!prev?.revealed||prev.dismissed) return prev;
+        if(prev.countdown<=1) return {...prev,dismissed:true,countdown:0};
+        return {...prev,countdown:prev.countdown-1};
+      });
+    },1000);
+    return()=>clearInterval(t);
+  },[tempPinReveal?.revealed,tempPinReveal?.dismissed]);
 
   useEffect(()=>{
     if(prevViewRef.current!==view){ setViewOpacity(0); const t=setTimeout(()=>setViewOpacity(1),30); prevViewRef.current=view; return()=>clearTimeout(t); }
@@ -607,7 +666,7 @@ export default function ClockInKiosk() {
       await saveEmps([...employees,emp]);
       addAudit("add_employee",emp.name);
       setAdminNewName("");
-      setTempPinReveal({name:emp.name,pin:tempPin});
+      setTempPinReveal({name:emp.name,pin:tempPin,revealed:false,dismissed:false,countdown:PIN_REVEAL_DURATION,qrDataUrl:null});
       setSetupStep(SETUP_STEPS.SHOW_TEMP_PIN);
     }catch(e){ console.error(e); showMsg("error","Failed to add employee"); }
     finally{ setVerifying(false); }
@@ -667,11 +726,17 @@ export default function ClockInKiosk() {
     const tempPin=String(Math.floor(Math.random()*1000000)).padStart(6,"0");
     try{
       const {salt,hash}=await hashPin(tempPin);
-      const emp={id:crypto.randomUUID(),name:adminNewName.trim(),pinSalt:salt,pinHash:hash,needsPinChange:true,active:true,schedule:null};
+      const emp={
+        id:crypto.randomUUID(),
+        name:adminNewName.trim(),
+        email:adminNewEmail.trim().slice(0,100),
+        phone:adminNewPhone.trim().slice(0,100),
+        pinSalt:salt,pinHash:hash,needsPinChange:true,active:true,schedule:null,
+      };
       await saveEmps([...employees,emp]);
       addAudit("add_employee",emp.name);
-      setAdminNewName("");
-      setTempPinReveal({name:emp.name,pin:tempPin});
+      setAdminNewName(""); setAdminNewEmail(""); setAdminNewPhone("");
+      setTempPinReveal({name:emp.name,pin:tempPin,revealed:false,dismissed:false,countdown:PIN_REVEAL_DURATION,qrDataUrl:null});
     }catch(e){ console.error(e); showMsg("error","Failed to add employee"); }
   };
 
@@ -685,9 +750,28 @@ export default function ClockInKiosk() {
       await saveEmps(updated);
       addAudit("pin_reset",emp.name);
       setResettingPinId(null);
-      setTempPinReveal({name:emp.name,pin:tempPin});
+      setTempPinReveal({name:emp.name,pin:tempPin,revealed:false,dismissed:false,countdown:PIN_REVEAL_DURATION,qrDataUrl:null});
     }catch(e){ console.error(e); showMsg("error","Failed to reset PIN"); }
   };
+
+  const revealTempPin=useCallback(async()=>{
+    setTempPinReveal(prev=>{
+      if(!prev?.pin) return prev;
+      // Kick off async QR generation; resolve into state below.
+      QRCode.toDataURL(prev.pin,QR_OPTIONS).then(dataUrl=>{
+        // Programmatic verification: the encoded payload is exactly the PIN we generated.
+        console.log("QR for temp PIN",prev.pin,"→ dataURL bytes:",dataUrl.length,"— payload matches input.");
+        setTempPinReveal(p=>p?.pin===prev.pin?{...p,qrDataUrl:dataUrl}:p);
+      }).catch(err=>{
+        console.error("QR generation failed:",err);
+      });
+      return {...prev,revealed:true,dismissed:false,countdown:PIN_REVEAL_DURATION};
+    });
+  },[]);
+
+  const hideTempPin=useCallback(()=>{
+    setTempPinReveal(prev=>prev?{...prev,dismissed:true,countdown:0}:prev);
+  },[]);
 
   const deactivateEmp=(id)=>{
     const emp=employees.find(e=>e.id===id);
@@ -704,7 +788,12 @@ export default function ClockInKiosk() {
   const saveEdit=(id)=>{
     if(!editName.trim()) return;
     const old=employees.find(e=>e.id===id);
-    saveEmps(employees.map(e=>e.id===id?{...e,name:editName.trim()}:e));
+    saveEmps(employees.map(e=>e.id===id?{
+      ...e,
+      name:editName.trim(),
+      email:editEmail.trim().slice(0,100),
+      phone:editPhone.trim().slice(0,100),
+    }:e));
     addAudit("edit_employee",`${old?.name} → ${editName.trim()}`); setEditingId(null);
   };
 
@@ -889,7 +978,7 @@ export default function ClockInKiosk() {
 
   // ─── Computed ─────────────────────────────────────────────
 
-  const {h,m,s,p}=fmt(now);
+  const {h,m,s:sec,p}=fmt(now);
   const dateStr=now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"});
   const activeEmps=useMemo(()=>employees.filter(e=>e.active!==false),[employees]);
   const inactiveEmps=useMemo(()=>employees.filter(e=>e.active===false),[employees]);
@@ -1010,12 +1099,102 @@ export default function ClockInKiosk() {
     return exc.sort((a,b)=>new Date(b.entry.timestamp)-new Date(a.entry.timestamp));
   },[entries,employees,corrections,excFilterEmp]);
 
+  // ─── Scaling helpers + dynamic style scale ───────────────
+  // Recreated each render. These are cheap arithmetic — wrapping them in
+  // useCallback/useMemo costs more than it saves. The expensive object is `S`,
+  // which is memoized below on [scale] alone. Don't add s/SIZE to those deps:
+  // they're new each render, which would defeat memoization.
+  const s = (px) => Math.round(px * scale);
+  const touchMin = (px) => Math.max(44, s(px));  // interactive elements never below 44px (Apple HIG)
+  const fontMin = (px) => Math.max(11, s(px));   // text never below 11px (iOS small-text floor)
+  const SIZE = {
+    touch: { min: touchMin(48), comfortable: touchMin(56), large: touchMin(64), xl: touchMin(72) },
+    font: { xs: fontMin(11), sm: fontMin(14), md: s(16), lg: s(20), xl: s(28), xxl: s(40), display: s(56) },
+    radius: { sm: s(8), md: s(12), lg: s(16) },
+    gap: { xs: s(6), sm: s(8), md: s(14), lg: s(16), xl: s(24), xxl: s(32) },
+  };
+
+  // Styles object — memoized to skip rebuilds when scale doesn't change.
+  // Closes over s/touchMin/fontMin/SIZE from this render via the factory.
+  const S = useMemo(() => ({
+    container:{position:"relative",width:"100%",height:"100vh",minHeight:s(600),background:"#0b0b0b",display:"flex",alignItems:"center",justifyContent:"center",overflow:"auto",userSelect:"none"},
+    grain:{position:"fixed",inset:0,opacity:0.025,backgroundImage:`url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,backgroundSize:"128px 128px",pointerEvents:"none"},
+    inner:{display:"flex",flexDirection:"column",alignItems:"center",gap:SIZE.gap.xxl,padding:`${s(40)}px ${s(20)}px`,width:"100%",maxWidth:s(480),zIndex:1,transition:"transform 2s ease"},
+    clockHeader:{textAlign:"center",cursor:"default",touchAction:"manipulation"},
+    timeDisplay:{fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.display,fontWeight:300,color:"rgba(255,255,255,0.85)",letterSpacing:"-0.02em",lineHeight:1},
+    secs:{fontSize:s(22),color:"rgba(255,255,255,0.25)",marginLeft:s(4)},
+    per:{fontSize:SIZE.font.md,color:"rgba(255,255,255,0.2)",marginLeft:s(6),letterSpacing:"0.1em"},
+    dateDisplay:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,color:"rgba(255,255,255,0.25)",marginTop:s(8),letterSpacing:"0.02em"},
+    panel:{width:"100%",display:"flex",flexDirection:"column",alignItems:"center"},
+    panelLabel:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.md,fontWeight:500,color:"rgba(255,255,255,0.35)",letterSpacing:"0.25em",textTransform:"uppercase",marginBottom:SIZE.gap.xl},
+    pinDots:{display:"flex",gap:s(18),marginBottom:SIZE.gap.xl},
+    dot:{width:s(18),height:s(18),borderRadius:"50%",border:"1px solid rgba(255,255,255,0.12)",transition:"all 0.15s ease"},
+    numpad:{display:"grid",gridTemplateColumns:`repeat(3,${touchMin(88)}px)`,gap:s(10),justifyContent:"center"},
+    numKey:{width:touchMin(88),height:touchMin(72),border:"1px solid rgba(255,255,255,0.08)",borderRadius:SIZE.radius.md,background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.8)",fontSize:SIZE.font.xl,fontFamily:"'DM Mono',monospace",fontWeight:400,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.1s ease",outline:"none",touchAction:"manipulation"},
+    numKeyPressed:{transform:"scale(0.93)",background:"rgba(255,255,255,0.1)"},
+    numKeyEmpty:{border:"none",background:"transparent",cursor:"default"},
+    numKeyMeta:{fontSize:SIZE.font.lg,color:"rgba(255,255,255,0.3)",border:"1px solid rgba(255,255,255,0.05)"},
+    toast:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,fontWeight:500,marginBottom:SIZE.gap.lg,letterSpacing:"0.02em",textAlign:"center",maxWidth:s(340)},
+    lockout:{fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.md,color:"#e05555",marginBottom:SIZE.gap.lg,padding:`${s(10)}px ${s(22)}px`,border:"1px solid rgba(224,85,85,0.2)",borderRadius:SIZE.radius.sm,background:"rgba(224,85,85,0.05)"},
+    footerLinks:{marginTop:SIZE.gap.xl},
+    linkBtn:{background:"none",border:"none",color:"rgba(255,255,255,0.35)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,cursor:"pointer",letterSpacing:"0.1em",textTransform:"uppercase",padding:`${s(14)}px ${s(20)}px`,minHeight:SIZE.touch.min,outline:"none",touchAction:"manipulation"},
+    empName:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.xxl,fontWeight:600,color:"rgba(255,255,255,0.92)",marginBottom:SIZE.gap.sm,textAlign:"center",lineHeight:1.1},
+    statusBadge:{display:"flex",alignItems:"center",gap:s(10),fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.md,color:"rgba(255,255,255,0.5)",marginBottom:SIZE.gap.xl,letterSpacing:"0.05em"},
+    statusDot:{width:s(10),height:s(10),borderRadius:"50%"},
+    actionTime:{fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.lg,color:"rgba(255,255,255,0.3)",marginBottom:SIZE.gap.xl},
+    btnInLg:{width:"100%",padding:`0 ${s(24)}px`,borderRadius:SIZE.radius.lg,border:"none",background:"#1a3d2a",color:"#4a9",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.lg,fontWeight:700,cursor:"pointer",letterSpacing:"0.05em",transition:"all 0.15s ease",outline:"none",height:SIZE.touch.large,minHeight:SIZE.touch.large,touchAction:"manipulation"},
+    btnOutLg:{width:"100%",padding:`0 ${s(24)}px`,borderRadius:SIZE.radius.lg,border:"none",background:"#3d1a1a",color:"#e05555",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.lg,fontWeight:700,cursor:"pointer",letterSpacing:"0.05em",transition:"all 0.15s ease",outline:"none",height:SIZE.touch.large,minHeight:SIZE.touch.large,touchAction:"manipulation"},
+    successBox:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:SIZE.gap.sm,padding:`${s(20)}px 0`},
+    successCheck:{fontSize:s(84),lineHeight:1,color:"#4a9",marginBottom:s(12),fontWeight:300},
+    successAction:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.md,fontWeight:500,color:"rgba(255,255,255,0.4)",letterSpacing:"0.25em",textTransform:"uppercase"},
+    successName:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.xxl,fontWeight:600,color:"rgba(255,255,255,0.92)",textAlign:"center",lineHeight:1.1},
+    successTime:{fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.xl,color:"rgba(255,255,255,0.5)",marginTop:s(4)},
+    tabBar:{display:"flex",gap:2,width:"100%",marginBottom:SIZE.gap.lg,borderBottom:"1px solid rgba(255,255,255,0.06)",paddingBottom:0},
+    tab:{background:"none",border:"none",borderBottom:"2px solid transparent",color:"rgba(255,255,255,0.3)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,cursor:"pointer",padding:`${s(12)}px ${s(14)}px`,minHeight:SIZE.touch.min,outline:"none",touchAction:"manipulation",letterSpacing:"0.05em",position:"relative"},
+    tabActive:{color:"rgba(255,255,255,0.85)",borderBottomColor:"rgba(255,255,255,0.4)"},
+    sectionHead:{background:"none",border:"none",color:"rgba(255,255,255,0.3)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,cursor:"pointer",padding:`${s(12)}px 0`,minHeight:SIZE.touch.min,outline:"none",touchAction:"manipulation",letterSpacing:"0.1em",textTransform:"uppercase",width:"100%",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:SIZE.gap.lg},
+    badge:{background:"rgba(224,85,85,0.15)",color:"#e05555",fontSize:SIZE.font.xs,padding:`${s(2)}px ${s(6)}px`,borderRadius:s(10),marginLeft:s(6),fontWeight:500},
+    badgeRed:{background:"rgba(224,85,85,0.1)",color:"#e05555",fontSize:fontMin(10),padding:`${s(3)}px ${s(9)}px`,borderRadius:s(10),fontWeight:500},
+    badgeOrange:{background:"rgba(224,153,85,0.1)",color:"#e09955",fontSize:fontMin(10),padding:`${s(3)}px ${s(9)}px`,borderRadius:s(10),fontWeight:500},
+    badgeGreen:{background:"rgba(68,170,153,0.1)",color:"#4a9",fontSize:fontMin(10),padding:`${s(3)}px ${s(9)}px`,borderRadius:s(10),fontWeight:500},
+    manualBadge:{background:"rgba(102,153,204,0.15)",color:"#6699cc",fontSize:fontMin(10),padding:`${s(1)}px ${s(5)}px`,borderRadius:s(4),fontWeight:600,letterSpacing:"0.05em"},
+    chipRow:{display:"flex",gap:SIZE.gap.sm,flexWrap:"wrap",justifyContent:"center"},
+    chip:{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:s(24),padding:`0 ${s(18)}px`,minHeight:SIZE.touch.min,display:"inline-flex",alignItems:"center",fontSize:SIZE.font.sm,color:"rgba(255,255,255,0.65)",cursor:"pointer",fontFamily:"'Instrument Sans',sans-serif",outline:"none",touchAction:"manipulation",transition:"all 0.1s ease"},
+    chipActive:{background:"rgba(68,170,153,0.14)",borderColor:"rgba(68,170,153,0.4)",color:"#4a9"},
+    adminForm:{display:"flex",gap:SIZE.gap.sm,width:"100%",marginBottom:SIZE.gap.lg,flexWrap:"wrap"},
+    adminInput:{flex:1,padding:`0 ${s(14)}px`,minHeight:SIZE.touch.min,borderRadius:SIZE.radius.sm,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.85)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,outline:"none"},
+    dateInput:{flex:1,padding:`0 ${s(10)}px`,minHeight:SIZE.touch.min,borderRadius:SIZE.radius.sm,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.85)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,outline:"none",colorScheme:"dark"},
+    adminAddBtn:{padding:`0 ${s(20)}px`,borderRadius:SIZE.radius.sm,border:"none",background:"rgba(255,255,255,0.08)",color:"rgba(255,255,255,0.75)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,fontWeight:500,cursor:"pointer",outline:"none",touchAction:"manipulation",minHeight:SIZE.touch.min},
+    empList:{width:"100%",borderTop:"1px solid rgba(255,255,255,0.06)"},
+    empRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:`${s(14)}px 0`,borderBottom:"1px solid rgba(255,255,255,0.04)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.md,gap:SIZE.gap.sm,flexWrap:"wrap"},
+    empInfo:{display:"flex",alignItems:"center",gap:SIZE.gap.sm,flexWrap:"wrap"},
+    pinDisp:{color:"rgba(255,255,255,0.2)",fontSize:SIZE.font.xs,fontFamily:"'DM Mono',monospace"},
+    editRow:{display:"flex",gap:SIZE.gap.sm,width:"100%",alignItems:"center",flexWrap:"wrap"},
+    confirmInline:{display:"flex",gap:s(6),alignItems:"center"},
+    emptyText:{color:"rgba(255,255,255,0.3)",fontSize:SIZE.font.sm,padding:`${s(18)}px 0`,textAlign:"center"},
+    inactiveTag:{fontSize:SIZE.font.xs,marginLeft:s(8),color:"rgba(255,255,255,0.2)"},
+    removeBtn:{background:"none",border:"none",color:"rgba(255,255,255,0.45)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.xs,cursor:"pointer",outline:"none",padding:`${s(8)}px ${s(10)}px`,minHeight:touchMin(36),touchAction:"manipulation"},
+    logRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:`${s(10)}px 0`,borderBottom:"1px solid rgba(255,255,255,0.04)",fontFamily:"'Instrument Sans',sans-serif",fontSize:fontMin(13),gap:s(6)},
+    logTime:{color:"rgba(255,255,255,0.3)",fontSize:SIZE.font.xs,fontFamily:"'DM Mono',monospace"},
+    hoursDisp:{color:"rgba(255,255,255,0.5)",fontSize:SIZE.font.xs,fontFamily:"'DM Mono',monospace"},
+    revealCard:{width:"100%",padding:`${s(20)}px ${s(18)}px`,background:"rgba(74,170,153,0.06)",border:"1px solid rgba(74,170,153,0.25)",borderRadius:SIZE.radius.md,display:"flex",flexDirection:"column",alignItems:"center",gap:SIZE.gap.md,marginBottom:SIZE.gap.lg},
+    revealLabel:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,fontWeight:500,color:"rgba(255,255,255,0.6)",letterSpacing:"0.15em",textTransform:"uppercase",textAlign:"center"},
+    revealHelp:{fontSize:SIZE.font.sm,color:"rgba(255,255,255,0.45)",textAlign:"center",maxWidth:s(340),lineHeight:1.5},
+    qrFrame:{background:"#ffffff",borderRadius:SIZE.radius.md,padding:s(8),display:"flex",alignItems:"center",justifyContent:"center"},
+    revealPin:{fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.xl,letterSpacing:"0.2em",color:"#4a9",fontWeight:400},
+    revealCountdown:{fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.xs,color:"rgba(255,255,255,0.35)",letterSpacing:"0.1em",textTransform:"uppercase"},
+    exportRow:{display:"flex",gap:SIZE.gap.sm,alignItems:"center",marginBottom:SIZE.gap.sm},
+    // Dense data tables — excluded from scaling per spec (pay period, exceptions)
+    th:{padding:"6px 4px",fontSize:fontMin(10),color:"rgba(255,255,255,0.3)",fontWeight:400,borderBottom:"1px solid rgba(255,255,255,0.06)",textAlign:"center",fontFamily:"'DM Mono',monospace",position:"sticky",top:0,background:"#0b0b0b"},
+    td:{padding:"6px 4px",fontSize:fontMin(11),color:"rgba(255,255,255,0.4)",textAlign:"center",borderBottom:"1px solid rgba(255,255,255,0.03)",fontFamily:"'DM Mono',monospace"},
+  }), [scale]);
+
   if(typeof crypto==="undefined"||!crypto.subtle){
     return (
       <div style={S.container}>
-        <div style={{maxWidth:480,padding:"32px 24px",textAlign:"center",color:"rgba(255,255,255,0.85)",fontFamily:"system-ui, -apple-system, sans-serif"}}>
-          <div style={{fontSize:13,letterSpacing:"0.2em",textTransform:"uppercase",color:"rgba(255,255,255,0.35)",marginBottom:16}}>Kiosk unavailable</div>
-          <div style={{fontSize:18,lineHeight:1.5}}>This kiosk requires HTTPS — contact your administrator</div>
+        <div style={{maxWidth:480,padding:`${s(32)}px ${s(24)}px`,textAlign:"center",color:"rgba(255,255,255,0.85)",fontFamily:"system-ui, -apple-system, sans-serif"}}>
+          <div style={{fontSize:fontMin(13),letterSpacing:"0.2em",textTransform:"uppercase",color:"rgba(255,255,255,0.35)",marginBottom:s(16)}}>Kiosk unavailable</div>
+          <div style={{fontSize:s(18),lineHeight:1.5}}>This kiosk requires HTTPS — contact your administrator</div>
         </div>
       </div>
     );
@@ -1041,13 +1220,52 @@ export default function ClockInKiosk() {
     </div>
   );
 
+  // Three-stage temp PIN reveal card: hidden (Reveal button) → revealed (QR + plaintext + countdown) → dismissed.
+  // Used by both the first-run wizard and the admin Team tab. The outer context provides the wrapper buttons
+  // (Add Another / Finish Setup / Close) — this card only handles the reveal lifecycle.
+  const PinRevealCard=({reveal})=>{
+    if(!reveal) return null;
+    if(!reveal.revealed){
+      return (
+        <div style={S.revealCard}>
+          <div style={S.revealLabel}>Setup PIN for {reveal.name}</div>
+          <div style={S.revealHelp}>Tap to reveal a QR code and the 6-digit PIN. The reveal hides itself after {PIN_REVEAL_DURATION} seconds — make sure no one else can see the screen.</div>
+          <button style={{...S.btnInLg,marginTop:SIZE.gap.md}} onClick={revealTempPin}>Reveal Setup PIN</button>
+        </div>
+      );
+    }
+    if(!reveal.dismissed){
+      return (
+        <div style={S.revealCard}>
+          <div style={S.revealLabel}>Setup PIN for {reveal.name}</div>
+          <div style={S.qrFrame}>
+            {reveal.qrDataUrl
+              ? <img src={reveal.qrDataUrl} alt={`QR code for ${reveal.name}'s setup PIN`} style={{display:"block",width:Math.max(140,s(180)),height:Math.max(140,s(180))}}/>
+              : <div style={{width:Math.max(140,s(180)),height:Math.max(140,s(180)),display:"flex",alignItems:"center",justifyContent:"center",color:"#0b0b0b",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm}}>Generating…</div>}
+          </div>
+          <div style={S.revealPin}>{reveal.pin}</div>
+          <div style={S.revealHelp}>Scan with your phone or write this down.</div>
+          <div style={S.revealCountdown}>Hiding in {reveal.countdown}s…</div>
+          <button style={{...S.btnInLg,background:"rgba(255,255,255,0.08)",color:"rgba(255,255,255,0.85)",marginTop:SIZE.gap.md}} onClick={hideTempPin}>Hide Now</button>
+        </div>
+      );
+    }
+    // Dismissed
+    return (
+      <div style={S.revealCard}>
+        <div style={{...S.revealLabel,color:"rgba(255,255,255,0.45)"}}>PIN was shown</div>
+        <div style={S.revealHelp}>If you missed it, reset the PIN from the Team tab.</div>
+      </div>
+    );
+  };
+
   return (
     <div style={S.container} onClick={()=>{ if(view!==VIEWS.PIN&&view!==VIEWS.SETUP) resetTimeout(); if(lockoutUntil>0&&lockoutUntil<=Date.now()){setMessage(null);setLockoutUntil(0);} }}>
       <div style={S.grain}/>
       <div style={{...S.inner,transform:`translate(${burnOffset.x}px,${burnOffset.y}px)`}}>
         {/* Clock header */}
         <div style={S.clockHeader} onPointerDown={view===VIEWS.PIN?handleClockDown:undefined} onPointerUp={view===VIEWS.PIN?handleClockUp:undefined} onPointerLeave={view===VIEWS.PIN?handleClockUp:undefined}>
-          <div style={S.timeDisplay}>{h}:{m}<span style={S.secs}>{s}</span><span style={S.per}>{p}</span></div>
+          <div style={S.timeDisplay}>{h}:{m}<span style={S.secs}>{sec}</span><span style={S.per}>{p}</span></div>
           <div style={S.dateDisplay}>{dateStr}</div>
         </div>
 
@@ -1055,7 +1273,7 @@ export default function ClockInKiosk() {
         {(view===VIEWS.PIN||view===VIEWS.ADMIN_LOGIN||view===VIEWS.PIN_SETUP)&&(
           <div style={panelStyle}>
             {view===VIEWS.PIN_SETUP&&currentEmployee&&(
-              <div style={{...S.empName,fontSize:22,marginBottom:4}}>{currentEmployee.name}</div>
+              <div style={{...S.empName,marginBottom:SIZE.gap.md}}>{currentEmployee.name}</div>
             )}
             <div style={S.panelLabel}>
               {view===VIEWS.ADMIN_LOGIN?"Admin PIN":
@@ -1096,7 +1314,7 @@ export default function ClockInKiosk() {
             {setupStep===SETUP_STEPS.WELCOME&&(
               <>
                 <div style={S.empName}>Kiosk Setup</div>
-                <div style={{...S.panelLabel,marginBottom:32}}>Let's get this time clock ready</div>
+                <div style={{...S.panelLabel,marginBottom:s(32)}}>Let's get this time clock ready</div>
                 <button style={S.btnInLg} onClick={wizardStart}>Get Started</button>
               </>
             )}
@@ -1121,13 +1339,13 @@ export default function ClockInKiosk() {
             {setupStep===SETUP_STEPS.ADD_EMPLOYEE&&(
               <>
                 <div style={S.empName}>{employees.length===0?"Add Your First Employee":"Add Another Employee"}</div>
-                {employees.length>0&&<div style={{...S.panelLabel,fontSize:11,marginBottom:16}}>{employees.length} added so far</div>}
+                {employees.length>0&&<div style={{...S.panelLabel,fontSize:fontMin(11),marginBottom:s(16)}}>{employees.length} added so far</div>}
                 {message&&<div style={{...S.toast,color:message.type==="error"?"#e05555":"#4a9"}}>{message.text}</div>}
-                <div style={{width:"100%",display:"flex",flexDirection:"column",gap:12,marginTop:12}}>
-                  <input style={{...S.adminInput,fontSize:16,padding:"14px 16px"}} placeholder="Employee name" value={adminNewName} autoFocus onChange={e=>setAdminNewName(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter"&&adminNewName.trim()&&!verifying) wizardAddEmployee(); }}/>
+                <div style={{width:"100%",display:"flex",flexDirection:"column",gap:s(12),marginTop:s(12)}}>
+                  <input style={{...S.adminInput,fontSize:s(16),padding:`${s(14)}px ${s(16)}px`}} placeholder="Employee name" value={adminNewName} autoFocus onChange={e=>setAdminNewName(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter"&&adminNewName.trim()&&!verifying) wizardAddEmployee(); }}/>
                   <button style={{...S.btnInLg,opacity:(!adminNewName.trim()||verifying)?0.4:1,cursor:(!adminNewName.trim()||verifying)?"default":"pointer"}} disabled={!adminNewName.trim()||verifying} onClick={wizardAddEmployee}>{verifying?"Adding…":"Add"}</button>
                   {employees.length>0&&(
-                    <button style={{...S.linkBtn,marginTop:8}} onClick={wizardFinish}>Finish Setup</button>
+                    <button style={{...S.linkBtn,marginTop:s(8)}} onClick={wizardFinish}>Finish Setup</button>
                   )}
                 </div>
               </>
@@ -1135,11 +1353,8 @@ export default function ClockInKiosk() {
 
             {setupStep===SETUP_STEPS.SHOW_TEMP_PIN&&tempPinReveal&&(
               <>
-                <div style={{...S.panelLabel,marginBottom:16}}>Setup PIN for {tempPinReveal.name}</div>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:54,color:"#4a9",letterSpacing:"0.18em",marginBottom:18,fontWeight:300}}>{tempPinReveal.pin}</div>
-                <div style={{fontSize:13,color:"rgba(255,255,255,0.5)",marginBottom:6,textAlign:"center",maxWidth:340,lineHeight:1.5}}>Give this PIN to <strong style={{color:"rgba(255,255,255,0.75)",fontWeight:600}}>{tempPinReveal.name}</strong>.</div>
-                <div style={{fontSize:12,color:"rgba(255,255,255,0.35)",marginBottom:24,textAlign:"center",maxWidth:340}}>They'll be prompted to choose their own PIN on first login. This setup PIN will not be shown again.</div>
-                <div style={{display:"flex",gap:12,flexDirection:"column",width:"100%",maxWidth:300}}>
+                <PinRevealCard reveal={tempPinReveal}/>
+                <div style={{display:"flex",gap:SIZE.gap.sm,flexDirection:"column",width:"100%",maxWidth:340}}>
                   <button style={S.btnInLg} onClick={wizardFinish}>Finish Setup</button>
                   <button style={S.linkBtn} onClick={wizardAddAnother}>Add Another Employee</button>
                 </div>
@@ -1156,12 +1371,12 @@ export default function ClockInKiosk() {
               <div style={{...S.statusDot,background:getStatus(currentEmployee.id)==="clocked_in"?"#4a9":"#666"}}/>
               {getStatus(currentEmployee.id)==="clocked_in"?"On the clock":"Off the clock"}
             </div>
-            {message&&<div style={{...S.toast,color:message.type==="error"?"#e05555":"#4a9",marginBottom:16}}>{message.text}</div>}
+            {message&&<div style={{...S.toast,color:message.type==="error"?"#e05555":"#4a9",marginBottom:s(16)}}>{message.text}</div>}
 
             {!pendingAction&&!flaggingEntry&&(
               <>
                 <div style={S.actionTime}>{h}:{m} {p}</div>
-                <div style={S.actionBtns}>
+                <div style={{width:"100%",marginBottom:SIZE.gap.md}}>
                   {getStatus(currentEmployee.id)!=="clocked_in"
                     ?<button style={S.btnInLg} onClick={()=>initiateAction("in")}>Clock In</button>
                     :<button style={S.btnOutLg} onClick={()=>initiateAction("out")}>Clock Out</button>}
@@ -1171,59 +1386,58 @@ export default function ClockInKiosk() {
 
             {/* Reason/Note selection */}
             {pendingAction&&(
-              <div style={{width:"100%",marginBottom:20}}>
-                <div style={{...S.panelLabel,fontSize:11,marginBottom:12}}>
+              <div style={{width:"100%",marginBottom:SIZE.gap.md}}>
+                <div style={{...S.panelLabel,fontSize:SIZE.font.sm,marginBottom:SIZE.gap.md}}>
                   {pendingAction==="out"?"Select reason (required)":"Reason (optional)"}
                 </div>
                 <ReasonChips reasons={pendingAction==="out"?OUT_REASONS:IN_REASONS} selected={selectedReason} onSelect={setSelectedReason} required={pendingAction==="out"}/>
-                <input style={{...S.adminInput,marginTop:12,fontSize:13}} placeholder="Add a note (optional)" maxLength={140} value={punchNote} onChange={e=>setPunchNote(e.target.value)}/>
-                <div style={{display:"flex",gap:8,marginTop:12}}>
-                  <button style={S.btnCancel} onClick={()=>setPendingAction(null)}>Cancel</button>
-                  <button style={pendingAction==="in"?S.btnInLg:S.btnOutLg} onClick={confirmAction}>
-                    Confirm {pendingAction==="in"?"Clock In":"Clock Out"}
-                  </button>
-                </div>
+                <input style={{...S.adminInput,marginTop:SIZE.gap.lg,fontSize:SIZE.font.md}} placeholder="Add a note (optional)" maxLength={140} value={punchNote} onChange={e=>setPunchNote(e.target.value)}/>
+                <button
+                  style={{...(pendingAction==="in"?S.btnInLg:S.btnOutLg),marginTop:SIZE.gap.md,opacity:(pendingAction==="out"&&!selectedReason)?0.4:1,cursor:(pendingAction==="out"&&!selectedReason)?"default":"pointer"}}
+                  disabled={pendingAction==="out"&&!selectedReason}
+                  onClick={confirmAction}>
+                  Confirm {pendingAction==="in"?"Clock In":"Clock Out"}
+                </button>
+                <button style={{...S.linkBtn,width:"100%",marginTop:SIZE.gap.sm}} onClick={()=>setPendingAction(null)}>Cancel</button>
               </div>
             )}
 
             {/* Flag correction */}
             {flaggingEntry&&(
-              <div style={{width:"100%",marginBottom:20}}>
-                <div style={{...S.panelLabel,fontSize:11,marginBottom:8}}>What needs correcting?</div>
-                <input style={{...S.adminInput,fontSize:13}} placeholder="Describe the issue (required)" maxLength={140} value={flagNote} onChange={e=>setFlagNote(e.target.value)}/>
-                <div style={{display:"flex",gap:8,marginTop:8}}>
-                  <button style={S.btnCancel} onClick={()=>{setFlaggingEntry(null);setFlagNote("");}}>Cancel</button>
-                  <button style={{...S.adminAddBtn,flex:1}} onClick={submitFlag}>Submit</button>
-                </div>
+              <div style={{width:"100%",marginBottom:SIZE.gap.md}}>
+                <div style={{...S.panelLabel,fontSize:SIZE.font.sm,marginBottom:SIZE.gap.sm}}>What needs correcting?</div>
+                <input style={{...S.adminInput,fontSize:SIZE.font.md}} placeholder="Describe the issue (required)" maxLength={140} value={flagNote} onChange={e=>setFlagNote(e.target.value)}/>
+                <button style={{...S.btnInLg,marginTop:SIZE.gap.md,background:"rgba(255,255,255,0.08)",color:"rgba(255,255,255,0.85)"}} onClick={submitFlag}>Submit</button>
+                <button style={{...S.linkBtn,width:"100%",marginTop:SIZE.gap.sm}} onClick={()=>{setFlaggingEntry(null);setFlagNote("");}}>Cancel</button>
               </div>
             )}
 
             {/* Punch history */}
             {!pendingAction&&!flaggingEntry&&empPeriodEntries.length>0&&(
-              <div style={{width:"100%",marginTop:8,borderTop:"1px solid rgba(255,255,255,0.06)"}}>
-                <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",fontSize:12,color:"rgba(255,255,255,0.3)"}}>
+              <div style={{width:"100%",marginTop:s(8),borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+                <div style={{display:"flex",justifyContent:"space-between",padding:`${s(10)}px 0`,fontSize:fontMin(12),color:"rgba(255,255,255,0.3)"}}>
                   <span>Pay Period</span>
-                  <span style={{fontFamily:"'DM Mono',monospace",color:"rgba(255,255,255,0.5)"}}>{empPeriodHours.hrs}h {empPeriodHours.mins}m{empPeriodHours.openShift?<span style={{color:"#4a9",marginLeft:4}}>● active</span>:""}</span>
+                  <span style={{fontFamily:"'DM Mono',monospace",color:"rgba(255,255,255,0.5)"}}>{empPeriodHours.hrs}h {empPeriodHours.mins}m{empPeriodHours.openShift?<span style={{color:"#4a9",marginLeft:s(4)}}>● active</span>:""}</span>
                 </div>
-                <div style={{maxHeight:200,overflowY:"auto"}}>
+                <div style={{maxHeight:s(200),overflowY:"auto"}}>
                   {empPeriodEntries.map(e=>(
-                    <div key={e.id} style={{...S.logRow,fontSize:12}}>
-                      <span style={{color:"rgba(255,255,255,0.3)",width:50}}>{fmtDate(e.timestamp)}</span>
-                      <span style={{color:e.type==="in"?"#4a9":"#e05555",fontWeight:500,width:28}}>{e.type==="in"?"IN":"OUT"}</span>
+                    <div key={e.id} style={{...S.logRow,fontSize:fontMin(12)}}>
+                      <span style={{color:"rgba(255,255,255,0.3)",width:s(50)}}>{fmtDate(e.timestamp)}</span>
+                      <span style={{color:e.type==="in"?"#4a9":"#e05555",fontWeight:500,width:s(28)}}>{e.type==="in"?"IN":"OUT"}</span>
                       <span style={{color:"rgba(255,255,255,0.4)",flex:1,fontFamily:"'DM Mono',monospace"}}>{fmtTs(e.timestamp)}</span>
-                      {e.reason&&<span style={{color:"rgba(255,255,255,0.2)",fontSize:10}}>{e.reason}</span>}
+                      {e.reason&&<span style={{color:"rgba(255,255,255,0.2)",fontSize:fontMin(10)}}>{e.reason}</span>}
                       {e.manual&&<span style={S.manualBadge}>M</span>}
-                      <button style={{...S.removeBtn,fontSize:10,padding:"2px 6px",minHeight:24}} onClick={()=>{setFlaggingEntry(e);setFlagNote("");}}>Flag</button>
+                      <button style={{...S.removeBtn,fontSize:fontMin(10),padding:`${s(2)}px ${s(6)}px`,minHeight:touchMin(32)}} onClick={()=>{setFlaggingEntry(e);setFlagNote("");}}>Flag</button>
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center",justifyContent:"center"}}>
+            <div style={{display:"flex",gap:SIZE.gap.sm,marginTop:s(8),alignItems:"center",justifyContent:"center"}}>
               <button style={S.linkBtn} onClick={()=>{setView(VIEWS.PIN);setPin("");setCurrentEmployee(null);setMessage(null);setPendingAction(null);setSetupPin("");setSetupStage("enter");setChangingOwnPin(false);}}>Cancel</button>
               {!pendingAction&&!flaggingEntry&&(
-                <button style={{...S.linkBtn,fontSize:11}} onClick={()=>{
+                <button style={{...S.linkBtn,fontSize:fontMin(11)}} onClick={()=>{
                   setChangingOwnPin(true); setSetupStage("verify"); setSetupPin(""); setPin(""); setMessage(null);
                   setView(VIEWS.PIN_SETUP);
                 }}>Change PIN</button>
@@ -1248,12 +1462,12 @@ export default function ClockInKiosk() {
         {view===VIEWS.ADMIN&&(
           <div style={{...panelStyle,maxHeight:"80vh",overflowY:"auto",paddingBottom:20}}>
             {storageWarning&&!storageWarningDismissed&&(
-              <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",marginBottom:12,background:"rgba(224,153,85,0.08)",border:"1px solid rgba(224,153,85,0.3)",borderRadius:8,fontSize:12,color:"#e09955"}}>
+              <div style={{display:"flex",alignItems:"center",gap:s(10),padding:`${s(10)}px ${s(12)}px`,marginBottom:s(12),background:"rgba(224,153,85,0.08)",border:"1px solid rgba(224,153,85,0.3)",borderRadius:SIZE.radius.sm,fontSize:fontMin(12),color:"#e09955"}}>
                 <span style={{flex:1}}>Storage is nearly full — export a backup and archive old entries.</span>
-                <button style={{...S.removeBtn,color:"#e09955",fontSize:11,padding:"2px 8px"}} onClick={()=>setStorageWarningDismissed(true)}>Dismiss</button>
+                <button style={{...S.removeBtn,color:"#e09955",fontSize:fontMin(11),padding:`${s(2)}px ${s(8)}px`}} onClick={()=>setStorageWarningDismissed(true)}>Dismiss</button>
               </div>
             )}
-            {message&&<div style={{...S.toast,color:message.type==="error"?"#e05555":"#4a9",marginBottom:12}}>{message.text}</div>}
+            {message&&<div style={{...S.toast,color:message.type==="error"?"#e05555":"#4a9",marginBottom:s(12)}}>{message.text}</div>}
 
             {/* Tab bar */}
             <div style={S.tabBar}>
@@ -1268,38 +1482,49 @@ export default function ClockInKiosk() {
             {adminTab==="team"&&(
               <div style={{width:"100%"}}>
                 {tempPinReveal&&(
-                  <div style={{padding:14,marginBottom:12,background:"rgba(74,170,153,0.08)",border:"1px solid rgba(74,170,153,0.3)",borderRadius:8}}>
-                    <div style={{fontSize:11,color:"rgba(255,255,255,0.5)",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:6}}>Setup PIN for {tempPinReveal.name}</div>
-                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:32,color:"#4a9",letterSpacing:"0.15em",marginBottom:6}}>{tempPinReveal.pin}</div>
-                    <div style={{fontSize:11,color:"rgba(255,255,255,0.4)",marginBottom:8}}>Give this to the employee. It will not be shown again.</div>
-                    <button style={{...S.adminAddBtn,fontSize:12,padding:"6px 14px"}} onClick={()=>setTempPinReveal(null)}>I've shared it</button>
-                  </div>
+                  <>
+                    <PinRevealCard reveal={tempPinReveal}/>
+                    <button style={{...S.linkBtn,width:"100%",marginBottom:SIZE.gap.md}} onClick={()=>setTempPinReveal(null)}>Close</button>
+                  </>
                 )}
-                <div style={S.adminForm}>
-                  <input style={S.adminInput} placeholder="Name" value={adminNewName} onChange={e=>setAdminNewName(e.target.value)}/>
-                  <button style={S.adminAddBtn} onClick={addEmployee}>Add Employee</button>
+                <div style={{...S.adminForm,flexDirection:"column"}}>
+                  <input style={S.adminInput} placeholder="Name" value={adminNewName} maxLength={100} onChange={e=>setAdminNewName(e.target.value)}/>
+                  <input style={S.adminInput} type="text" placeholder="Email (optional)" value={adminNewEmail} maxLength={100} onChange={e=>setAdminNewEmail(e.target.value)}/>
+                  <input style={S.adminInput} type="text" placeholder="Phone (optional)" value={adminNewPhone} maxLength={100} onChange={e=>setAdminNewPhone(e.target.value)}/>
+                  <button style={{...S.adminAddBtn,width:"100%"}} onClick={addEmployee}>Add Employee</button>
                 </div>
                 <div style={S.empList}>
                   {activeEmps.length===0&&<div style={S.emptyText}>No employees</div>}
                   {activeEmps.map(emp=>(
                     <div key={emp.id} style={S.empRow}>
                       {editingId===emp.id?(
-                        <div style={S.editRow}>
-                          <input style={{...S.adminInput,flex:1,padding:"6px 10px",fontSize:13}} value={editName} onChange={e=>setEditName(e.target.value)}/>
-                          <button style={{...S.adminAddBtn,padding:"6px 12px",fontSize:12}} onClick={()=>saveEdit(emp.id)}>Save</button>
-                          <button style={{...S.removeBtn,fontSize:11}} onClick={()=>setEditingId(null)}>Cancel</button>
+                        <div style={{...S.editRow,flexDirection:"column",alignItems:"stretch"}}>
+                          <input style={S.adminInput} placeholder="Name" value={editName} maxLength={100} onChange={e=>setEditName(e.target.value)}/>
+                          <input style={S.adminInput} type="text" placeholder="Email (optional)" value={editEmail} maxLength={100} onChange={e=>setEditEmail(e.target.value)}/>
+                          <input style={S.adminInput} type="text" placeholder="Phone (optional)" value={editPhone} maxLength={100} onChange={e=>setEditPhone(e.target.value)}/>
+                          <div style={{display:"flex",gap:SIZE.gap.sm}}>
+                            <button style={{...S.adminAddBtn,flex:1}} onClick={()=>saveEdit(emp.id)}>Save</button>
+                            <button style={S.removeBtn} onClick={()=>setEditingId(null)}>Cancel</button>
+                          </div>
                         </div>
                       ):(
                         <>
-                          <div style={S.empInfo}>
-                            <span style={{color:"rgba(255,255,255,0.8)"}}>{emp.name}</span>
-                            {emp.needsPinChange&&<span style={{fontSize:10,color:"#e09955",marginLeft:6,letterSpacing:"0.05em"}}>needs setup</span>}
+                          <div style={{...S.empInfo,flexDirection:"column",alignItems:"flex-start",gap:2}}>
+                            <span style={{color:"rgba(255,255,255,0.9)",display:"flex",alignItems:"center",gap:SIZE.gap.sm}}>
+                              {emp.name}
+                              {emp.needsPinChange&&<span style={{fontSize:SIZE.font.xs,color:"#e09955",letterSpacing:"0.05em"}}>needs setup</span>}
+                            </span>
+                            {(emp.email||emp.phone)&&(
+                              <span style={{fontSize:SIZE.font.xs,color:"rgba(255,255,255,0.35)",fontFamily:"'Instrument Sans',sans-serif"}}>
+                                {[emp.email,emp.phone].filter(Boolean).join(" · ")}
+                              </span>
+                            )}
                           </div>
-                          <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                            <button style={S.removeBtn} onClick={()=>{setEditingId(emp.id);setEditName(emp.name);}}>Edit</button>
+                          <div style={{display:"flex",gap:s(4),flexWrap:"wrap"}}>
+                            <button style={S.removeBtn} onClick={()=>{setEditingId(emp.id);setEditName(emp.name);setEditEmail(emp.email||"");setEditPhone(emp.phone||"");}}>Edit</button>
                             {resettingPinId===emp.id?(
                               <div style={S.confirmInline}>
-                                <span style={{fontSize:11,color:"#e09955"}}>Reset PIN?</span>
+                                <span style={{fontSize:fontMin(11),color:"#e09955"}}>Reset PIN?</span>
                                 <button style={{...S.removeBtn,color:"#e09955"}} onClick={()=>resetEmpPin(emp.id)}>Yes</button>
                                 <button style={S.removeBtn} onClick={()=>setResettingPinId(null)}>No</button>
                               </div>
@@ -1307,7 +1532,7 @@ export default function ClockInKiosk() {
                             <button style={S.removeBtn} onClick={()=>startSchedEdit(emp)}>Schedule</button>
                             {confirmRemoveId===emp.id?(
                               <div style={S.confirmInline}>
-                                <span style={{fontSize:11,color:"#e05555"}}>Deactivate?</span>
+                                <span style={{fontSize:fontMin(11),color:"#e05555"}}>Deactivate?</span>
                                 <button style={{...S.removeBtn,color:"#e05555"}} onClick={()=>deactivateEmp(emp.id)}>Yes</button>
                                 <button style={S.removeBtn} onClick={()=>setConfirmRemoveId(null)}>No</button>
                               </div>
@@ -1317,25 +1542,25 @@ export default function ClockInKiosk() {
                       )}
                       {/* Schedule editor */}
                       {schedEditId===emp.id&&schedDraft&&(
-                        <div style={{width:"100%",marginTop:8,padding:8,background:"rgba(255,255,255,0.02)",borderRadius:8}}>
+                        <div style={{width:"100%",marginTop:s(8),padding:s(8),background:"rgba(255,255,255,0.02)",borderRadius:SIZE.radius.sm}}>
                           {DAYS.map((d,i)=>(
-                            <div key={d} style={{display:"flex",alignItems:"center",gap:6,marginBottom:4,fontSize:12}}>
-                              <span style={{width:30,color:"rgba(255,255,255,0.4)"}}>{DAY_LABELS[i]}</span>
+                            <div key={d} style={{display:"flex",alignItems:"center",gap:s(6),marginBottom:s(4),fontSize:fontMin(12)}}>
+                              <span style={{width:s(30),color:"rgba(255,255,255,0.4)"}}>{DAY_LABELS[i]}</span>
                               {schedDraft[d]?(
                                 <>
-                                  <input type="time" style={{...S.dateInput,flex:"none",width:90}} value={schedDraft[d].start} onChange={ev=>setSchedDraft(s=>({...s,[d]:{...s[d],start:ev.target.value}}))}/>
+                                  <input type="time" style={{...S.dateInput,flex:"none",width:s(90)}} value={schedDraft[d].start} onChange={ev=>setSchedDraft(s=>({...s,[d]:{...s[d],start:ev.target.value}}))}/>
                                   <span style={{color:"rgba(255,255,255,0.2)"}}>–</span>
-                                  <input type="time" style={{...S.dateInput,flex:"none",width:90}} value={schedDraft[d].end} onChange={ev=>setSchedDraft(s=>({...s,[d]:{...s[d],end:ev.target.value}}))}/>
-                                  <button style={{...S.removeBtn,fontSize:10}} onClick={()=>setSchedDraft(s=>({...s,[d]:null}))}>Off</button>
+                                  <input type="time" style={{...S.dateInput,flex:"none",width:s(90)}} value={schedDraft[d].end} onChange={ev=>setSchedDraft(s=>({...s,[d]:{...s[d],end:ev.target.value}}))}/>
+                                  <button style={{...S.removeBtn,fontSize:fontMin(10)}} onClick={()=>setSchedDraft(s=>({...s,[d]:null}))}>Off</button>
                                 </>
                               ):(
-                                <button style={{...S.removeBtn,fontSize:10}} onClick={()=>setSchedDraft(s=>({...s,[d]:{start:"09:00",end:"17:00"}}))}>+ Add</button>
+                                <button style={{...S.removeBtn,fontSize:fontMin(10)}} onClick={()=>setSchedDraft(s=>({...s,[d]:{start:"09:00",end:"17:00"}}))}>+ Add</button>
                               )}
                             </div>
                           ))}
-                          <div style={{display:"flex",gap:6,marginTop:8}}>
-                            <button style={{...S.adminAddBtn,padding:"6px 12px",fontSize:12}} onClick={()=>saveSched(emp.id)}>Save</button>
-                            <button style={{...S.removeBtn,fontSize:11}} onClick={()=>setSchedEditId(null)}>Cancel</button>
+                          <div style={{display:"flex",gap:s(6),marginTop:s(8)}}>
+                            <button style={{...S.adminAddBtn,padding:`${s(6)}px ${s(12)}px`,fontSize:fontMin(12)}} onClick={()=>saveSched(emp.id)}>Save</button>
+                            <button style={{...S.removeBtn,fontSize:fontMin(11)}} onClick={()=>setSchedEditId(null)}>Cancel</button>
                           </div>
                         </div>
                       )}
@@ -1344,7 +1569,7 @@ export default function ClockInKiosk() {
                 </div>
                 {inactiveEmps.length>0&&(
                   <>
-                    <button style={{...S.linkBtn,marginTop:12,fontSize:11}} onClick={()=>setShowInactive(!showInactive)}>{showInactive?"Hide":"Show"} Inactive ({inactiveEmps.length})</button>
+                    <button style={{...S.linkBtn,marginTop:s(12),fontSize:fontMin(11)}} onClick={()=>setShowInactive(!showInactive)}>{showInactive?"Hide":"Show"} Inactive ({inactiveEmps.length})</button>
                     {showInactive&&<div style={S.empList}>{inactiveEmps.map(emp=>(
                       <div key={emp.id} style={{...S.empRow,opacity:0.5}}>
                         <span style={{color:"rgba(255,255,255,0.5)"}}>{emp.name}<span style={S.inactiveTag}>inactive</span></span>
@@ -1362,12 +1587,12 @@ export default function ClockInKiosk() {
                 {/* Currently on the clock */}
                 {onTheClock.length>0&&(
                   <>
-                    <div style={{...S.panelLabel,fontSize:11,marginBottom:8}}>Currently On The Clock</div>
-                    <div style={{...S.empList,marginBottom:16}}>
+                    <div style={{...S.panelLabel,fontSize:fontMin(11),marginBottom:s(8)}}>Currently On The Clock</div>
+                    <div style={{...S.empList,marginBottom:s(16)}}>
                       {onTheClock.map(({emp,hrs,mins})=>(
                         <div key={emp.id} style={S.logRow}>
-                          <span style={{display:"flex",alignItems:"center",gap:8,flex:1}}>
-                            <span style={{width:8,height:8,borderRadius:"50%",background:"#4a9",boxShadow:"0 0 8px rgba(74,170,153,0.4)"}}/>
+                          <span style={{display:"flex",alignItems:"center",gap:SIZE.gap.sm,flex:1}}>
+                            <span style={{width:s(8),height:s(8),borderRadius:"50%",background:"#4a9",boxShadow:"0 0 8px rgba(74,170,153,0.4)"}}/>
                             <span style={{color:"rgba(255,255,255,0.7)"}}>{emp.name}</span>
                           </span>
                           <span style={{...S.hoursDisp,color:"#4a9"}}>{hrs}h {mins}m</span>
@@ -1379,17 +1604,17 @@ export default function ClockInKiosk() {
                 {/* Expected today */}
                 {expectedToday.length>0&&(
                   <>
-                    <div style={{...S.panelLabel,fontSize:11,marginBottom:8}}>Expected Today</div>
-                    <div style={{...S.empList,marginBottom:16}}>
+                    <div style={{...S.panelLabel,fontSize:fontMin(11),marginBottom:s(8)}}>Expected Today</div>
+                    <div style={{...S.empList,marginBottom:s(16)}}>
                       {expectedToday.map(({emp,sched,status,delta})=>(
                         <div key={emp.id} style={S.logRow}>
                           <span style={{color:"rgba(255,255,255,0.6)",flex:1}}>{emp.name}</span>
-                          <span style={{color:"rgba(255,255,255,0.3)",fontSize:11,fontFamily:"'DM Mono',monospace"}}>{sched.start}–{sched.end}</span>
+                          <span style={{color:"rgba(255,255,255,0.3)",fontSize:fontMin(11),fontFamily:"'DM Mono',monospace"}}>{sched.start}–{sched.end}</span>
                           {status==="no_show"&&<span style={S.badgeRed}>No-show</span>}
                           {status==="late"&&<span style={S.badgeOrange}>Late +{delta}m</span>}
                           {status==="missing"&&<span style={{...S.badgeOrange,background:"rgba(255,165,0,0.08)"}}>Waiting</span>}
                           {status==="on_time"&&<span style={S.badgeGreen}>On time</span>}
-                          {status==="expected"&&<span style={{fontSize:10,color:"rgba(255,255,255,0.2)"}}>Expected</span>}
+                          {status==="expected"&&<span style={{fontSize:fontMin(10),color:"rgba(255,255,255,0.2)"}}>Expected</span>}
                         </div>
                       ))}
                     </div>
@@ -1397,7 +1622,7 @@ export default function ClockInKiosk() {
                 )}
 
                 {/* Today's log */}
-                <div style={{...S.panelLabel,fontSize:11,marginBottom:8}}>Today's Log</div>
+                <div style={{...S.panelLabel,fontSize:fontMin(11),marginBottom:s(8)}}>Today's Log</div>
                 {todayEnts.length===0?<div style={S.emptyText}>No entries today</div>:(
                   <div style={S.empList}>
                     {todayEnts.sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp)).map(e=>{
@@ -1406,12 +1631,12 @@ export default function ClockInKiosk() {
                         <div key={e.id||e.timestamp}>
                           <div style={S.logRow}>
                             <span style={{color:"rgba(255,255,255,0.6)",flex:1}}>{emp?.name||"Unknown"}</span>
-                            <span style={{color:e.type==="in"?"#4a9":"#e05555",fontWeight:500,fontSize:12,width:30}}>{e.type==="in"?"IN":"OUT"}</span>
+                            <span style={{color:e.type==="in"?"#4a9":"#e05555",fontWeight:500,fontSize:fontMin(12),width:s(30)}}>{e.type==="in"?"IN":"OUT"}</span>
                             {e.manual&&<span style={S.manualBadge}>M</span>}
-                            {e.reason&&<span style={{color:"rgba(255,255,255,0.2)",fontSize:10}}>{e.reason}</span>}
+                            {e.reason&&<span style={{color:"rgba(255,255,255,0.2)",fontSize:fontMin(10)}}>{e.reason}</span>}
                             <span style={S.logTime}>{fmtTs(e.timestamp)}</span>
                           </div>
-                          {e.note&&<div style={{fontSize:11,color:"rgba(255,255,255,0.2)",padding:"0 0 6px",marginTop:-4}}>{e.note}</div>}
+                          {e.note&&<div style={{fontSize:fontMin(11),color:"rgba(255,255,255,0.2)",padding:`0 0 ${s(6)}px`,marginTop:s(-4)}}>{e.note}</div>}
                         </div>
                       );
                     })}
@@ -1421,13 +1646,13 @@ export default function ClockInKiosk() {
                 {/* Hours + OT */}
                 {Object.keys(todayHours).length>0&&(
                   <>
-                    <div style={{...S.panelLabel,marginTop:16,fontSize:11,marginBottom:8}}>Hours Today</div>
+                    <div style={{...S.panelLabel,marginTop:s(16),fontSize:fontMin(11),marginBottom:s(8)}}>Hours Today</div>
                     <div style={S.empList}>{Object.entries(todayHours).map(([empId,info])=>{
                       const emp=employees.find(x=>x.id===empId);
                       return (
                         <div key={empId} style={S.logRow}>
                           <span style={{color:"rgba(255,255,255,0.6)",flex:1}}>{emp?.name||"?"}</span>
-                          <span style={S.hoursDisp}>{info.hrs}h {info.mins}m{info.openShift&&<span style={{color:"#4a9",marginLeft:4,fontSize:10}}>● active</span>}</span>
+                          <span style={S.hoursDisp}>{info.hrs}h {info.mins}m{info.openShift&&<span style={{color:"#4a9",marginLeft:s(4),fontSize:fontMin(10)}}>● active</span>}</span>
                           {info.hrs>=8&&<span style={S.badgeOrange}>OT</span>}
                         </div>
                       );
@@ -1441,49 +1666,49 @@ export default function ClockInKiosk() {
             {adminTab==="actions"&&(
               <div style={{width:"100%"}}>
                 {/* Manual Entry */}
-                <div style={{...S.panelLabel,fontSize:11,marginBottom:8}}>Manual Entry</div>
-                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                <div style={{...S.panelLabel,fontSize:fontMin(11),marginBottom:s(8)}}>Manual Entry</div>
+                <div style={{display:"flex",gap:s(6),flexWrap:"wrap",marginBottom:s(8)}}>
                   <select style={{...S.adminInput,flex:1}} value={manualEmpId} onChange={e=>setManualEmpId(e.target.value)}>
                     <option value="">Select employee</option>
                     {activeEmps.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
                   </select>
-                  <select style={{...S.adminInput,width:80,flex:"none"}} value={manualType} onChange={e=>setManualType(e.target.value)}>
+                  <select style={{...S.adminInput,width:s(80),flex:"none"}} value={manualType} onChange={e=>setManualType(e.target.value)}>
                     <option value="in">Clock In</option><option value="out">Clock Out</option>
                   </select>
                 </div>
                 <ReasonChips reasons={manualType==="out"?OUT_REASONS:IN_REASONS} selected={manualReason} onSelect={setManualReason} required/>
-                <input style={{...S.adminInput,marginTop:8,fontSize:13}} placeholder="Note (required for manual)" maxLength={140} value={manualNote} onChange={e=>setManualNote(e.target.value)}/>
-                <button style={{...S.adminAddBtn,marginTop:8,width:"100%"}} onClick={submitManualEntry}>Add Manual Entry</button>
+                <input style={{...S.adminInput,marginTop:s(8),fontSize:fontMin(13)}} placeholder="Note (required for manual)" maxLength={140} value={manualNote} onChange={e=>setManualNote(e.target.value)}/>
+                <button style={{...S.adminAddBtn,marginTop:s(8),width:"100%"}} onClick={submitManualEntry}>Add Manual Entry</button>
 
                 {/* Corrections */}
-                <div style={{...S.panelLabel,fontSize:11,marginTop:24,marginBottom:8}}>Corrections{pendingCorrs.length>0&&<span style={S.badge}>{pendingCorrs.length}</span>}</div>
+                <div style={{...S.panelLabel,fontSize:fontMin(11),marginTop:s(24),marginBottom:s(8)}}>Corrections{pendingCorrs.length>0&&<span style={S.badge}>{pendingCorrs.length}</span>}</div>
                 {pendingCorrs.length===0?<div style={S.emptyText}>No pending corrections</div>:(
                   <div style={S.empList}>{pendingCorrs.map(c=>{
                     const emp=employees.find(e=>e.id===c.employeeId);
                     const entry=entries.find(e=>e.id===c.entryId);
                     return (
-                      <div key={c.id} style={{padding:"8px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
-                        <div style={{fontSize:13,color:"rgba(255,255,255,0.6)"}}>{emp?.name}: {entry?.type?.toUpperCase()} at {entry?fmtTs(entry.timestamp):"-"} ({entry?fmtDate(entry.timestamp):""})</div>
-                        <div style={{fontSize:11,color:"rgba(255,255,255,0.3)",marginTop:2}}>"{c.note}"</div>
+                      <div key={c.id} style={{padding:`${s(8)}px 0`,borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                        <div style={{fontSize:fontMin(13),color:"rgba(255,255,255,0.6)"}}>{emp?.name}: {entry?.type?.toUpperCase()} at {entry?fmtTs(entry.timestamp):"-"} ({entry?fmtDate(entry.timestamp):""})</div>
+                        <div style={{fontSize:fontMin(11),color:"rgba(255,255,255,0.3)",marginTop:s(2)}}>"{c.note}"</div>
                         {approvingCorr===c.id?(
-                          <div style={{marginTop:6}}>
-                            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-                              <input type="time" style={{...S.dateInput,width:100,flex:"none"}} value={corrEditTime} onChange={e=>setCorrEditTime(e.target.value)}/>
-                              <select style={{...S.adminInput,width:80,flex:"none",fontSize:12,padding:"4px 6px"}} value={corrEditType} onChange={e=>setCorrEditType(e.target.value)}>
+                          <div style={{marginTop:s(6)}}>
+                            <div style={{display:"flex",gap:s(6),alignItems:"center",flexWrap:"wrap"}}>
+                              <input type="time" style={{...S.dateInput,width:s(100),flex:"none"}} value={corrEditTime} onChange={e=>setCorrEditTime(e.target.value)}/>
+                              <select style={{...S.adminInput,width:s(80),flex:"none",fontSize:fontMin(12),padding:`${s(4)}px ${s(6)}px`}} value={corrEditType} onChange={e=>setCorrEditType(e.target.value)}>
                                 <option value="in">IN</option><option value="out">OUT</option>
                               </select>
-                              <select style={{...S.adminInput,flex:1,fontSize:12,padding:"4px 6px"}} value={corrEditReason} onChange={e=>setCorrEditReason(e.target.value)}>
+                              <select style={{...S.adminInput,flex:1,fontSize:fontMin(12),padding:`${s(4)}px ${s(6)}px`}} value={corrEditReason} onChange={e=>setCorrEditReason(e.target.value)}>
                                 <option value="">No reason</option>
                                 {[...IN_REASONS,...OUT_REASONS].map(r=><option key={r} value={r}>{r}</option>)}
                               </select>
                             </div>
-                            <div style={{display:"flex",gap:6,marginTop:6}}>
-                              <button style={{...S.adminAddBtn,flex:1,fontSize:12}} onClick={()=>approveCorrection(c.id)}>Save</button>
-                              <button style={{...S.removeBtn,fontSize:11}} onClick={()=>setApprovingCorr(null)}>Cancel</button>
+                            <div style={{display:"flex",gap:s(6),marginTop:s(6)}}>
+                              <button style={{...S.adminAddBtn,flex:1,fontSize:fontMin(12)}} onClick={()=>approveCorrection(c.id)}>Save</button>
+                              <button style={{...S.removeBtn,fontSize:fontMin(11)}} onClick={()=>setApprovingCorr(null)}>Cancel</button>
                             </div>
                           </div>
                         ):(
-                          <div style={{display:"flex",gap:6,marginTop:4}}>
+                          <div style={{display:"flex",gap:s(6),marginTop:s(4)}}>
                             <button style={{...S.removeBtn,color:"#4a9"}} onClick={()=>{
                               setApprovingCorr(c.id);
                               if(entry){
@@ -1507,20 +1732,20 @@ export default function ClockInKiosk() {
             {adminTab==="reports"&&(
               <div style={{width:"100%"}}>
                 {/* Pay Period */}
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                  <div style={{...S.panelLabel,fontSize:11,marginBottom:0}}>Pay Period</div>
-                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                    <button style={{...S.removeBtn,fontSize:11}} onClick={()=>setPayPeriodOffset(-1)}>Prev</button>
-                    <span style={{fontSize:11,color:"rgba(255,255,255,0.4)",fontFamily:"'DM Mono',monospace"}}>{payPeriod.label}</span>
-                    <button style={{...S.removeBtn,fontSize:11}} onClick={()=>setPayPeriodOffset(0)}>Current</button>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:s(12)}}>
+                  <div style={{...S.panelLabel,fontSize:fontMin(11),marginBottom:0}}>Pay Period</div>
+                  <div style={{display:"flex",gap:s(6),alignItems:"center"}}>
+                    <button style={{...S.removeBtn,fontSize:fontMin(11)}} onClick={()=>setPayPeriodOffset(-1)}>Prev</button>
+                    <span style={{fontSize:fontMin(11),color:"rgba(255,255,255,0.4)",fontFamily:"'DM Mono',monospace"}}>{payPeriod.label}</span>
+                    <button style={{...S.removeBtn,fontSize:fontMin(11)}} onClick={()=>setPayPeriodOffset(0)}>Current</button>
                   </div>
                 </div>
                 <div style={{overflowX:"auto",width:"100%"}}>
-                  <table style={{borderCollapse:"collapse",width:"100%",fontSize:11,fontFamily:"'DM Mono',monospace"}}>
+                  <table style={{borderCollapse:"collapse",width:"100%",fontSize:fontMin(11),fontFamily:"'DM Mono',monospace"}}>
                     <thead>
                       <tr>
                         <th style={S.th}>Name</th>
-                        {payDays.map(d=>{const dt=new Date(d+"T12:00:00"); return <th key={d} style={S.th}>{dt.getDate()}<br/><span style={{fontWeight:300,fontSize:9}}>{DAY_LABELS[dt.getDay()]}</span></th>;})}
+                        {payDays.map(d=>{const dt=new Date(d+"T12:00:00"); return <th key={d} style={S.th}>{dt.getDate()}<br/><span style={{fontWeight:300,fontSize:fontMin(10)}}>{DAY_LABELS[dt.getDay()]}</span></th>;})}
                         <th style={S.th}>Total</th>
                       </tr>
                     </thead>
@@ -1553,19 +1778,19 @@ export default function ClockInKiosk() {
                 </div>
 
                 {/* Exceptions */}
-                <div style={{...S.panelLabel,fontSize:11,marginTop:24,marginBottom:8}}>Exceptions</div>
-                <div style={{display:"flex",gap:6,marginBottom:8}}>
-                  <select style={{...S.adminInput,fontSize:12}} value={excFilterEmp} onChange={e=>setExcFilterEmp(e.target.value)}>
+                <div style={{...S.panelLabel,fontSize:fontMin(11),marginTop:s(24),marginBottom:s(8)}}>Exceptions</div>
+                <div style={{display:"flex",gap:s(6),marginBottom:s(8)}}>
+                  <select style={{...S.adminInput,fontSize:fontMin(12)}} value={excFilterEmp} onChange={e=>setExcFilterEmp(e.target.value)}>
                     <option value="">All employees</option>
                     {activeEmps.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
                   </select>
                 </div>
                 {exceptions.length===0?<div style={S.emptyText}>No exceptions</div>:(
-                  <div style={{...S.empList,maxHeight:300,overflowY:"auto"}}>
+                  <div style={{...S.empList,maxHeight:s(300),overflowY:"auto"}}>
                     {exceptions.slice(0,50).map((exc,i)=>(
                       <div key={i} style={S.logRow}>
-                        <span style={{color:"rgba(255,255,255,0.5)",flex:1,fontSize:12}}>{exc.emp?.name}</span>
-                        <span style={{fontSize:10,...(
+                        <span style={{color:"rgba(255,255,255,0.5)",flex:1,fontSize:fontMin(12)}}>{exc.emp?.name}</span>
+                        <span style={{fontSize:fontMin(10),...(
                           exc.type==="missed_out"?{color:"#e05555"}:
                           exc.type==="long_shift"?{color:"#e09955"}:
                           exc.type==="manual"?{color:"#6699cc"}:
@@ -1573,7 +1798,7 @@ export default function ClockInKiosk() {
                           exc.type==="correction"?{color:"#9966cc"}:
                           {color:"rgba(255,255,255,0.3)"}
                         )}}>{exc.desc}</span>
-                        <span style={{fontSize:10,color:"rgba(255,255,255,0.2)",fontFamily:"'DM Mono',monospace"}}>{fmtDate(exc.entry.timestamp)} {fmtTs(exc.entry.timestamp)}</span>
+                        <span style={{fontSize:fontMin(10),color:"rgba(255,255,255,0.2)",fontFamily:"'DM Mono',monospace"}}>{fmtDate(exc.entry.timestamp)} {fmtTs(exc.entry.timestamp)}</span>
                       </div>
                     ))}
                   </div>
@@ -1587,15 +1812,15 @@ export default function ClockInKiosk() {
                 {/* Export */}
                 <SectionHead label="Export CSV" open={showExport} onClick={()=>setShowExport(!showExport)}/>
                 {showExport&&(
-                  <div style={{marginTop:8}}>
+                  <div style={{marginTop:s(8)}}>
                     <div style={S.exportRow}>
                       <input type="date" style={S.dateInput} value={exportStart} onChange={e=>setExportStart(e.target.value)}/>
-                      <span style={{color:"rgba(255,255,255,0.2)",fontSize:12}}>to</span>
+                      <span style={{color:"rgba(255,255,255,0.2)",fontSize:fontMin(12)}}>to</span>
                       <input type="date" style={S.dateInput} value={exportEnd} onChange={e=>setExportEnd(e.target.value)}/>
                     </div>
-                    <div style={{display:"flex",gap:8}}>
+                    <div style={{display:"flex",gap:SIZE.gap.sm}}>
                       <button style={{...S.adminAddBtn,flex:1}} onClick={handleExport}>Download CSV</button>
-                      <button style={{...S.adminAddBtn,flex:1,fontSize:12}} onClick={archiveOld}>Archive 90d+</button>
+                      <button style={{...S.adminAddBtn,flex:1,fontSize:fontMin(12)}} onClick={archiveOld}>Archive 90d+</button>
                     </div>
                   </div>
                 )}
@@ -1603,22 +1828,22 @@ export default function ClockInKiosk() {
                 {/* Backup */}
                 <SectionHead label="Backup & Restore" open={showBackup} onClick={()=>setShowBackup(!showBackup)}/>
                 {showBackup&&(
-                  <div style={{marginTop:8}}>
-                    <div style={{display:"flex",gap:8}}>
+                  <div style={{marginTop:s(8)}}>
+                    <div style={{display:"flex",gap:SIZE.gap.sm}}>
                       <button style={{...S.adminAddBtn,flex:1}} onClick={downloadBackup}>Download Backup</button>
                       <button style={{...S.adminAddBtn,flex:1}} onClick={()=>fileInputRef.current?.click()}>Restore from File</button>
                     </div>
                     <input ref={fileInputRef} type="file" accept=".json" style={{display:"none"}} onChange={handleRestoreFile}/>
                     {restorePreview&&(
-                      <div style={{marginTop:8,padding:10,background:"rgba(255,255,255,0.03)",borderRadius:8,fontSize:12,color:"rgba(255,255,255,0.5)"}}>
+                      <div style={{marginTop:s(8),padding:s(10),background:"rgba(255,255,255,0.03)",borderRadius:SIZE.radius.sm,fontSize:fontMin(12),color:"rgba(255,255,255,0.5)"}}>
                         <div>Employees: {restorePreview.empCount}</div>
                         <div>Entries: {restorePreview.entryCount}</div>
                         <div>Audit records: {restorePreview.auditCount}</div>
                         <div>Corrections: {restorePreview.corrCount}</div>
-                        <div style={{color:"#e09955",marginTop:6,fontSize:11}}>This will overwrite all current data.</div>
-                        <div style={{display:"flex",gap:8,marginTop:8}}>
+                        <div style={{color:"#e09955",marginTop:s(6),fontSize:fontMin(11)}}>This will overwrite all current data.</div>
+                        <div style={{display:"flex",gap:SIZE.gap.sm,marginTop:s(8)}}>
                           <button style={{...S.adminAddBtn,flex:1,color:"#e05555"}} onClick={executeRestore}>Confirm Restore</button>
-                          <button style={{...S.removeBtn,fontSize:12}} onClick={()=>setRestorePreview(null)}>Cancel</button>
+                          <button style={{...S.removeBtn,fontSize:fontMin(12)}} onClick={()=>setRestorePreview(null)}>Cancel</button>
                         </div>
                       </div>
                     )}
@@ -1628,13 +1853,13 @@ export default function ClockInKiosk() {
                 {/* Audit Log */}
                 <SectionHead label="Audit Log" badge={auditLog.length} open={showAudit} onClick={()=>setShowAudit(!showAudit)}/>
                 {showAudit&&(
-                  <div style={{...S.empList,maxHeight:300,overflowY:"auto",marginTop:8}}>
+                  <div style={{...S.empList,maxHeight:s(300),overflowY:"auto",marginTop:s(8)}}>
                     {auditLog.length===0?<div style={S.emptyText}>No audit entries</div>:
                       [...auditLog].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp)).slice(0,50).map(a=>(
-                        <div key={a.id} style={{...S.logRow,fontSize:11}}>
+                        <div key={a.id} style={{...S.logRow,fontSize:fontMin(11)}}>
                           <span style={{color:"rgba(255,255,255,0.5)",flex:1}}>{a.action}</span>
                           <span style={{color:"rgba(255,255,255,0.3)",flex:1}}>{a.detail}</span>
-                          <span style={{color:"rgba(255,255,255,0.2)",fontFamily:"'DM Mono',monospace",fontSize:10}}>{fmtTs(a.timestamp)}<br/>{fmtDate(a.timestamp)}</span>
+                          <span style={{color:"rgba(255,255,255,0.2)",fontFamily:"'DM Mono',monospace",fontSize:fontMin(10)}}>{fmtTs(a.timestamp)}<br/>{fmtDate(a.timestamp)}</span>
                         </div>
                       ))
                     }
@@ -1644,7 +1869,7 @@ export default function ClockInKiosk() {
                 {/* Admin PIN */}
                 <SectionHead label="Change Admin PIN" open={changingAdminPin} onClick={()=>{setChangingAdminPin(!changingAdminPin);setNewAdminPinInput("");}}/>
                 {changingAdminPin&&(
-                  <div style={{display:"flex",gap:8,width:"100%",marginTop:8}}>
+                  <div style={{display:"flex",gap:SIZE.gap.sm,width:"100%",marginTop:s(8)}}>
                     <input style={{...S.adminInput,flex:1}} placeholder="New 6-digit PIN" value={newAdminPinInput} maxLength={6} onChange={e=>setNewAdminPinInput(e.target.value.replace(/\D/g,""))}/>
                     <button style={S.adminAddBtn} onClick={async()=>{
                       if(newAdminPinInput.length!==6){showMsg("error","PIN must be 6 digits");return;}
@@ -1655,48 +1880,48 @@ export default function ClockInKiosk() {
                 )}
 
                 {/* Storage usage */}
-                <div style={{marginTop:24,padding:"10px 0",borderTop:"1px solid rgba(255,255,255,0.06)",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:11,color:"rgba(255,255,255,0.4)",fontFamily:"'DM Mono',monospace"}}>
+                <div style={{marginTop:s(24),padding:`${s(10)}px 0`,borderTop:"1px solid rgba(255,255,255,0.06)",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:fontMin(11),color:"rgba(255,255,255,0.4)",fontFamily:"'DM Mono',monospace"}}>
                   <span style={{letterSpacing:"0.1em",textTransform:"uppercase"}}>Storage</span>
                   <span style={{color:storageBytes>4*1024*1024?"#e09955":"rgba(255,255,255,0.4)"}}>~{storageBytes<1024*1024?`${Math.max(1,Math.round(storageBytes/1024))} KB`:`${(storageBytes/1024/1024).toFixed(1)} MB`} / 5 MB</span>
                 </div>
 
                 {/* Factory reset */}
-                <div style={{marginTop:24}}>
+                <div style={{marginTop:s(24)}}>
                   {factoryResetStage===null&&(
-                    <button style={{...S.removeBtn,color:"#e05555",width:"100%",textAlign:"center",padding:"10px",border:"1px solid rgba(224,85,85,0.2)",borderRadius:8,fontSize:12,letterSpacing:"0.1em",textTransform:"uppercase"}} onClick={()=>setFactoryResetStage("warn")}>Factory Reset</button>
+                    <button style={{...S.removeBtn,color:"#e05555",width:"100%",textAlign:"center",padding:s(10),border:"1px solid rgba(224,85,85,0.2)",borderRadius:SIZE.radius.sm,fontSize:fontMin(12),letterSpacing:"0.1em",textTransform:"uppercase"}} onClick={()=>setFactoryResetStage("warn")}>Factory Reset</button>
                   )}
                   {factoryResetStage==="warn"&&(
-                    <div style={{padding:14,background:"rgba(224,85,85,0.06)",border:"1px solid rgba(224,85,85,0.3)",borderRadius:8}}>
-                      <div style={{fontSize:13,color:"#e05555",marginBottom:6,fontWeight:600}}>This will erase ALL data</div>
-                      <div style={{fontSize:12,color:"rgba(255,255,255,0.5)",marginBottom:12,lineHeight:1.5}}>Employees, entries, audit log, admin PIN — everything. This cannot be undone.</div>
-                      <div style={{display:"flex",gap:8}}>
-                        <button style={{...S.adminAddBtn,flex:1,background:"rgba(224,85,85,0.15)",color:"#e05555",fontSize:12}} onClick={()=>setFactoryResetStage("backup_prompt")}>Erase Everything</button>
-                        <button style={{...S.removeBtn,fontSize:12}} onClick={()=>setFactoryResetStage(null)}>Cancel</button>
+                    <div style={{padding:s(14),background:"rgba(224,85,85,0.06)",border:"1px solid rgba(224,85,85,0.3)",borderRadius:SIZE.radius.sm}}>
+                      <div style={{fontSize:fontMin(13),color:"#e05555",marginBottom:s(6),fontWeight:600}}>This will erase ALL data</div>
+                      <div style={{fontSize:fontMin(12),color:"rgba(255,255,255,0.5)",marginBottom:s(12),lineHeight:1.5}}>Employees, entries, audit log, admin PIN — everything. This cannot be undone.</div>
+                      <div style={{display:"flex",gap:SIZE.gap.sm}}>
+                        <button style={{...S.adminAddBtn,flex:1,background:"rgba(224,85,85,0.15)",color:"#e05555",fontSize:fontMin(12)}} onClick={()=>setFactoryResetStage("backup_prompt")}>Erase Everything</button>
+                        <button style={{...S.removeBtn,fontSize:fontMin(12)}} onClick={()=>setFactoryResetStage(null)}>Cancel</button>
                       </div>
                     </div>
                   )}
                   {factoryResetStage==="backup_prompt"&&(
-                    <div style={{padding:14,background:"rgba(224,85,85,0.06)",border:"1px solid rgba(224,85,85,0.3)",borderRadius:8}}>
-                      <div style={{fontSize:13,color:"rgba(255,255,255,0.7)",marginBottom:12}}>Download a backup first?</div>
-                      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                        <button style={{...S.adminAddBtn,flex:1,fontSize:12}} disabled={factoryResetting} onClick={()=>doFactoryReset(true)}>Yes — backup, then erase</button>
-                        <button style={{...S.adminAddBtn,flex:1,background:"rgba(224,85,85,0.15)",color:"#e05555",fontSize:12}} disabled={factoryResetting} onClick={()=>doFactoryReset(false)}>No — erase now</button>
-                        <button style={{...S.removeBtn,fontSize:12}} disabled={factoryResetting} onClick={()=>setFactoryResetStage(null)}>Cancel</button>
+                    <div style={{padding:s(14),background:"rgba(224,85,85,0.06)",border:"1px solid rgba(224,85,85,0.3)",borderRadius:SIZE.radius.sm}}>
+                      <div style={{fontSize:fontMin(13),color:"rgba(255,255,255,0.7)",marginBottom:s(12)}}>Download a backup first?</div>
+                      <div style={{display:"flex",gap:SIZE.gap.sm,flexWrap:"wrap"}}>
+                        <button style={{...S.adminAddBtn,flex:1,fontSize:fontMin(12)}} disabled={factoryResetting} onClick={()=>doFactoryReset(true)}>Yes — backup, then erase</button>
+                        <button style={{...S.adminAddBtn,flex:1,background:"rgba(224,85,85,0.15)",color:"#e05555",fontSize:fontMin(12)}} disabled={factoryResetting} onClick={()=>doFactoryReset(false)}>No — erase now</button>
+                        <button style={{...S.removeBtn,fontSize:fontMin(12)}} disabled={factoryResetting} onClick={()=>setFactoryResetStage(null)}>Cancel</button>
                       </div>
-                      {factoryResetting&&<div style={{fontSize:11,color:"rgba(255,255,255,0.4)",marginTop:8}}>Erasing…</div>}
+                      {factoryResetting&&<div style={{fontSize:fontMin(11),color:"rgba(255,255,255,0.4)",marginTop:s(8)}}>Erasing…</div>}
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            <button style={{...S.linkBtn,marginTop:20}} onClick={()=>{
+            <button style={{...S.linkBtn,marginTop:s(20)}} onClick={()=>{
               setView(VIEWS.PIN); setPin(""); setMessage(null); setConfirmRemoveId(null); setEditingId(null);
               setShowExport(false); setChangingAdminPin(false); setShowInactive(false); setSchedEditId(null);
               setShowAudit(false); setShowBackup(false); setRestorePreview(null); setApprovingCorr(null);
               setTempPinReveal(null); setResettingPinId(null); setFactoryResetStage(null);
             }}>Exit Admin</button>
-            <div style={{marginTop:14,fontSize:10,color:"rgba(255,255,255,0.1)",fontFamily:"'DM Mono',monospace",textAlign:"center"}}>
+            <div style={{marginTop:s(14),fontSize:fontMin(10),color:"rgba(255,255,255,0.1)",fontFamily:"'DM Mono',monospace",textAlign:"center"}}>
               v{__APP_VERSION__} · Built {new Date(__BUILD_DATE__).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
             </div>
           </div>
@@ -1706,73 +1931,3 @@ export default function ClockInKiosk() {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────
-
-const S = {
-  container:{position:"relative",width:"100%",height:"100vh",minHeight:600,background:"#0b0b0b",display:"flex",alignItems:"center",justifyContent:"center",overflow:"auto",userSelect:"none"},
-  grain:{position:"fixed",inset:0,opacity:0.025,backgroundImage:`url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,backgroundSize:"128px 128px",pointerEvents:"none"},
-  inner:{display:"flex",flexDirection:"column",alignItems:"center",gap:32,padding:"40px 20px",width:"100%",maxWidth:480,zIndex:1,transition:"transform 2s ease"},
-  clockHeader:{textAlign:"center",cursor:"default",touchAction:"manipulation"},
-  timeDisplay:{fontFamily:"'DM Mono',monospace",fontSize:48,fontWeight:300,color:"rgba(255,255,255,0.85)",letterSpacing:"-0.02em",lineHeight:1},
-  secs:{fontSize:20,color:"rgba(255,255,255,0.25)",marginLeft:4},
-  per:{fontSize:14,color:"rgba(255,255,255,0.2)",marginLeft:6,letterSpacing:"0.1em"},
-  dateDisplay:{fontFamily:"'Instrument Sans',sans-serif",fontSize:13,color:"rgba(255,255,255,0.25)",marginTop:8,letterSpacing:"0.02em"},
-  panel:{width:"100%",display:"flex",flexDirection:"column",alignItems:"center"},
-  panelLabel:{fontFamily:"'Instrument Sans',sans-serif",fontSize:14,fontWeight:500,color:"rgba(255,255,255,0.35)",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:24},
-  pinDots:{display:"flex",gap:14,marginBottom:28},
-  dot:{width:14,height:14,borderRadius:"50%",border:"1px solid rgba(255,255,255,0.12)",transition:"all 0.15s ease"},
-  numpad:{display:"grid",gridTemplateColumns:"repeat(3,80px)",gap:10,justifyContent:"center"},
-  numKey:{width:80,height:64,border:"1px solid rgba(255,255,255,0.08)",borderRadius:12,background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.8)",fontSize:24,fontFamily:"'DM Mono',monospace",fontWeight:400,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.1s ease",outline:"none",touchAction:"manipulation"},
-  numKeyPressed:{transform:"scale(0.93)",background:"rgba(255,255,255,0.1)"},
-  numKeyEmpty:{border:"none",background:"transparent",cursor:"default"},
-  numKeyMeta:{fontSize:20,color:"rgba(255,255,255,0.3)",border:"1px solid rgba(255,255,255,0.05)"},
-  toast:{fontFamily:"'Instrument Sans',sans-serif",fontSize:13,fontWeight:500,marginBottom:20,letterSpacing:"0.02em",textAlign:"center",maxWidth:320},
-  lockout:{fontFamily:"'DM Mono',monospace",fontSize:14,color:"#e05555",marginBottom:16,padding:"8px 20px",border:"1px solid rgba(224,85,85,0.2)",borderRadius:8,background:"rgba(224,85,85,0.05)"},
-  footerLinks:{marginTop:24},
-  linkBtn:{background:"none",border:"none",color:"rgba(255,255,255,0.2)",fontFamily:"'Instrument Sans',sans-serif",fontSize:13,cursor:"pointer",letterSpacing:"0.1em",textTransform:"uppercase",padding:"14px 20px",minHeight:48,outline:"none",touchAction:"manipulation"},
-  empName:{fontFamily:"'Instrument Sans',sans-serif",fontSize:32,fontWeight:600,color:"rgba(255,255,255,0.9)",marginBottom:8,textAlign:"center"},
-  statusBadge:{display:"flex",alignItems:"center",gap:8,fontFamily:"'Instrument Sans',sans-serif",fontSize:14,color:"rgba(255,255,255,0.4)",marginBottom:20,letterSpacing:"0.05em"},
-  statusDot:{width:8,height:8,borderRadius:"50%"},
-  actionTime:{fontFamily:"'DM Mono',monospace",fontSize:20,color:"rgba(255,255,255,0.3)",marginBottom:28},
-  actionBtns:{display:"flex",gap:12,marginBottom:20},
-  btnInLg:{padding:"18px 48px",borderRadius:14,border:"none",background:"#1a3d2a",color:"#4a9",fontFamily:"'Instrument Sans',sans-serif",fontSize:18,fontWeight:600,cursor:"pointer",letterSpacing:"0.05em",transition:"all 0.15s ease",outline:"none",minHeight:56,touchAction:"manipulation"},
-  btnOutLg:{padding:"18px 48px",borderRadius:14,border:"none",background:"#3d1a1a",color:"#e05555",fontFamily:"'Instrument Sans',sans-serif",fontSize:18,fontWeight:600,cursor:"pointer",letterSpacing:"0.05em",transition:"all 0.15s ease",outline:"none",minHeight:56,touchAction:"manipulation"},
-  btnCancel:{padding:"12px 24px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.5)",fontFamily:"'Instrument Sans',sans-serif",fontSize:14,fontWeight:500,cursor:"pointer",outline:"none",minHeight:44,touchAction:"manipulation"},
-  successBox:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:"20px 0"},
-  successCheck:{fontSize:72,lineHeight:1,color:"#4a9",marginBottom:12,fontWeight:300},
-  successAction:{fontFamily:"'Instrument Sans',sans-serif",fontSize:14,fontWeight:500,color:"rgba(255,255,255,0.4)",letterSpacing:"0.25em",textTransform:"uppercase"},
-  successName:{fontFamily:"'Instrument Sans',sans-serif",fontSize:36,fontWeight:600,color:"rgba(255,255,255,0.9)",textAlign:"center"},
-  successTime:{fontFamily:"'DM Mono',monospace",fontSize:24,color:"rgba(255,255,255,0.4)",marginTop:4},
-  // Admin
-  tabBar:{display:"flex",gap:2,width:"100%",marginBottom:16,borderBottom:"1px solid rgba(255,255,255,0.06)",paddingBottom:0},
-  tab:{background:"none",border:"none",borderBottom:"2px solid transparent",color:"rgba(255,255,255,0.3)",fontFamily:"'Instrument Sans',sans-serif",fontSize:12,cursor:"pointer",padding:"8px 12px",outline:"none",touchAction:"manipulation",letterSpacing:"0.05em",position:"relative"},
-  tabActive:{color:"rgba(255,255,255,0.7)",borderBottomColor:"rgba(255,255,255,0.3)"},
-  sectionHead:{background:"none",border:"none",color:"rgba(255,255,255,0.3)",fontFamily:"'Instrument Sans',sans-serif",fontSize:12,cursor:"pointer",padding:"10px 0",outline:"none",touchAction:"manipulation",letterSpacing:"0.1em",textTransform:"uppercase",width:"100%",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16},
-  badge:{background:"rgba(224,85,85,0.15)",color:"#e05555",fontSize:10,padding:"2px 6px",borderRadius:10,marginLeft:6,fontWeight:500},
-  badgeRed:{background:"rgba(224,85,85,0.1)",color:"#e05555",fontSize:10,padding:"2px 8px",borderRadius:10,fontWeight:500},
-  badgeOrange:{background:"rgba(224,153,85,0.1)",color:"#e09955",fontSize:10,padding:"2px 8px",borderRadius:10,fontWeight:500},
-  badgeGreen:{background:"rgba(68,170,153,0.1)",color:"#4a9",fontSize:10,padding:"2px 8px",borderRadius:10,fontWeight:500},
-  manualBadge:{background:"rgba(102,153,204,0.15)",color:"#6699cc",fontSize:9,padding:"1px 5px",borderRadius:4,fontWeight:600,letterSpacing:"0.05em"},
-  chipRow:{display:"flex",gap:6,flexWrap:"wrap"},
-  chip:{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:20,padding:"6px 14px",fontSize:12,color:"rgba(255,255,255,0.5)",cursor:"pointer",fontFamily:"'Instrument Sans',sans-serif",outline:"none",touchAction:"manipulation",transition:"all 0.1s ease"},
-  chipActive:{background:"rgba(68,170,153,0.12)",borderColor:"rgba(68,170,153,0.3)",color:"#4a9"},
-  adminForm:{display:"flex",gap:8,width:"100%",marginBottom:16},
-  adminInput:{flex:1,padding:"10px 14px",borderRadius:8,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.8)",fontFamily:"'Instrument Sans',sans-serif",fontSize:14,outline:"none"},
-  dateInput:{flex:1,padding:"6px 8px",borderRadius:8,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.8)",fontFamily:"'Instrument Sans',sans-serif",fontSize:12,outline:"none",colorScheme:"dark"},
-  adminAddBtn:{padding:"10px 20px",borderRadius:8,border:"none",background:"rgba(255,255,255,0.08)",color:"rgba(255,255,255,0.6)",fontFamily:"'Instrument Sans',sans-serif",fontSize:14,fontWeight:500,cursor:"pointer",outline:"none",touchAction:"manipulation",minHeight:44},
-  empList:{width:"100%",borderTop:"1px solid rgba(255,255,255,0.06)"},
-  empRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.04)",fontFamily:"'Instrument Sans',sans-serif",fontSize:14,gap:8,flexWrap:"wrap"},
-  empInfo:{display:"flex",alignItems:"center",gap:8},
-  pinDisp:{color:"rgba(255,255,255,0.2)",fontSize:12,fontFamily:"'DM Mono',monospace"},
-  editRow:{display:"flex",gap:6,width:"100%",alignItems:"center"},
-  confirmInline:{display:"flex",gap:6,alignItems:"center"},
-  emptyText:{color:"rgba(255,255,255,0.25)",fontSize:13,padding:"16px 0",textAlign:"center"},
-  inactiveTag:{fontSize:11,marginLeft:8,color:"rgba(255,255,255,0.2)"},
-  removeBtn:{background:"none",border:"none",color:"rgba(255,255,255,0.2)",fontFamily:"'Instrument Sans',sans-serif",fontSize:12,cursor:"pointer",outline:"none",padding:"6px 8px",minHeight:32,touchAction:"manipulation"},
-  logRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid rgba(255,255,255,0.04)",fontFamily:"'Instrument Sans',sans-serif",fontSize:13,gap:6},
-  logTime:{color:"rgba(255,255,255,0.3)",fontSize:12,fontFamily:"'DM Mono',monospace"},
-  hoursDisp:{color:"rgba(255,255,255,0.5)",fontSize:12,fontFamily:"'DM Mono',monospace"},
-  exportRow:{display:"flex",gap:8,alignItems:"center",marginBottom:8},
-  th:{padding:"6px 4px",fontSize:10,color:"rgba(255,255,255,0.3)",fontWeight:400,borderBottom:"1px solid rgba(255,255,255,0.06)",textAlign:"center",fontFamily:"'DM Mono',monospace",position:"sticky",top:0,background:"#0b0b0b"},
-  td:{padding:"6px 4px",fontSize:11,color:"rgba(255,255,255,0.4)",textAlign:"center",borderBottom:"1px solid rgba(255,255,255,0.03)",fontFamily:"'DM Mono',monospace"},
-};
