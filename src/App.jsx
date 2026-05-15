@@ -48,7 +48,11 @@ function getScale() {
   const w = window.innerWidth;
   const h = window.innerHeight;
   const raw = Math.min(w / 820, h / 1180);
-  return Math.max(0.55, Math.min(2.0, raw));
+  // Floor at 0.7: any lower and phone viewports get a tiny "iPad-card" look
+  // with too much surrounding chrome. 0.7 gives the kiosk some visual presence
+  // on narrow viewports while still leaving fontMin/touchMin to enforce the
+  // hard readability + tap-target floors.
+  return Math.max(0.7, Math.min(2.0, raw));
 }
 
 const VIEWS = { PIN:"pin", ACTION:"action", SUCCESS:"success", ADMIN:"admin", ADMIN_LOGIN:"admin_login", PIN_SETUP:"pin_setup", SETUP:"setup", RECOVER_PIN:"recover_pin" };
@@ -1396,7 +1400,9 @@ export default function ClockInKiosk() {
   const S = useMemo(() => ({
     container:{position:"relative",width:"100%",height:"100vh",minHeight:s(600),background:"#0b0b0b",display:"flex",alignItems:"center",justifyContent:"center",overflow:"auto",userSelect:"none",fontFamily:"'Outfit',sans-serif",fontVariantNumeric:"tabular-nums",color:"rgba(255,255,255,0.85)"},
     grain:{position:"fixed",inset:0,opacity:0.025,backgroundImage:`url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,backgroundSize:"128px 128px",pointerEvents:"none"},
-    inner:{display:"flex",flexDirection:"column",alignItems:"center",gap:SIZE.gap.xxl,padding:`${s(40)}px ${s(20)}px`,width:"100%",maxWidth:s(480),zIndex:1,transition:"transform 2s ease"},
+    // Panel maxWidth: viewport-aware. Floors at the raw 480px design width so phone viewports
+    // don't shrink the panel to a tiny card, caps via 100vw-gutter so we never overflow.
+    inner:{display:"flex",flexDirection:"column",alignItems:"center",gap:SIZE.gap.xxl,padding:`${s(40)}px ${s(20)}px`,width:"100%",maxWidth:`min(${Math.max(480,s(480))}px, calc(100vw - ${s(24)}px))`,zIndex:1,transition:"transform 2s ease"},
     clockHeader:{textAlign:"center",cursor:"default",touchAction:"manipulation"},
     // Employee-facing clock at 500 weight: visible at distance under fluorescent / window glare without going as heavy as 600.
     timeDisplay:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.display,fontWeight:500,color:"rgba(255,255,255,0.88)",letterSpacing:"-0.02em",lineHeight:1},
