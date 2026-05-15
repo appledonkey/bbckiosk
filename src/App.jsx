@@ -20,6 +20,9 @@ const SK = {
   employees: "kiosk-employees",
   adminPin: "kiosk-admin-pin",
   setupState: "kiosk-setup-state",
+  worksite: "kiosk-worksite",
+  businessName: "kiosk-business-name",
+  adminRecovery: "kiosk-admin-recovery",
 };
 
 const LOCKOUT_THRESHOLD = 5;
@@ -48,8 +51,12 @@ function getScale() {
   return Math.max(0.55, Math.min(2.0, raw));
 }
 
-const VIEWS = { PIN:"pin", ACTION:"action", SUCCESS:"success", ADMIN:"admin", ADMIN_LOGIN:"admin_login", PIN_SETUP:"pin_setup", SETUP:"setup" };
-const SETUP_STEPS = { WELCOME:"welcome", ADMIN_PIN:"admin_pin", ADMIN_PIN_CONFIRM:"admin_pin_confirm", ADD_EMPLOYEE:"add_employee", SHOW_TEMP_PIN:"show_temp_pin" };
+const VIEWS = { PIN:"pin", ACTION:"action", SUCCESS:"success", ADMIN:"admin", ADMIN_LOGIN:"admin_login", PIN_SETUP:"pin_setup", SETUP:"setup", RECOVER_PIN:"recover_pin" };
+const SETUP_STEPS = { WELCOME:"welcome", ADMIN_PIN:"admin_pin", ADMIN_PIN_CONFIRM:"admin_pin_confirm", RECOVERY_CODE:"recovery_code", ADD_EMPLOYEE:"add_employee", SHOW_TEMP_PIN:"show_temp_pin" };
+// Recovery code character set — A–Z + 2–9, excluding ambiguous 0/O/1/I/L for legibility on hand-written paper.
+const RECOVERY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const RECOVERY_GROUPS = 3;
+const RECOVERY_GROUP_LEN = 4; // total length 12, displayed as XXXX-XXXX-XXXX
 const ADMIN_TABS = [
   { id:"team", label:"Team" },
   { id:"today", label:"Today" },
@@ -146,6 +153,32 @@ function computeHours(ents) {
     else openIn=null;
   }
   return { hrs:Math.floor(total/3600000), mins:Math.floor((total%3600000)/60000), ms:total, openShift:!!openIn };
+}
+
+// Great-circle distance between two lat/lng points in meters (Haversine formula).
+// Used by the geofence check on every clock-in/out to enforce the worksite radius.
+function haversineMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000; // Earth radius in meters
+  const toRad = (deg) => deg * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Cryptographically random recovery code from a legibility-friendly alphabet (no 0/O/1/I/L).
+// Returns 12 chars grouped as XXXX-XXXX-XXXX for hand-copying. ~62 bits of entropy.
+function generateRecoveryCode() {
+  const total = RECOVERY_GROUPS * RECOVERY_GROUP_LEN;
+  const bytes = crypto.getRandomValues(new Uint8Array(total));
+  let chars = "";
+  for (let i = 0; i < total; i++) chars += RECOVERY_ALPHABET[bytes[i] % RECOVERY_ALPHABET.length];
+  return Array.from({ length: RECOVERY_GROUPS }, (_, i) => chars.slice(i * RECOVERY_GROUP_LEN, (i + 1) * RECOVERY_GROUP_LEN)).join("-");
+}
+
+// Strip hyphens + whitespace and uppercase, so the user can paste/type with or without separators.
+function normalizeRecoveryCode(input) {
+  return (input || "").replace(/[\s-]/g, "").toUpperCase();
 }
 
 function genCsv(filtered, emps) {
@@ -290,6 +323,27 @@ export default function ClockInKiosk() {
   // Factory reset flow
   const [factoryResetStage, setFactoryResetStage] = useState(null); // null | "warn" | "backup_prompt"
   const [factoryResetting, setFactoryResetting] = useState(false);
+
+  // v1.2.0: Geofencing
+  const [worksite, setWorksite] = useState(null); // { lat, lng, radius } | null (= disabled)
+  const [worksiteDraft, setWorksiteDraft] = useState({ lat: "", lng: "", radius: "100" });
+  const [showWorksite, setShowWorksite] = useState(false);
+  const [worksiteLocating, setWorksiteLocating] = useState(false);
+
+  // v1.2.0: Business name
+  const [businessName, setBusinessName] = useState("");
+  const [businessNameDraft, setBusinessNameDraft] = useState("");
+  const [showBusinessName, setShowBusinessName] = useState(false);
+
+  // v1.2.0: Admin recovery code
+  const [adminRecovery, setAdminRecoveryState] = useState(null); // { salt, hash } | null
+  const [recoveryReveal, setRecoveryReveal] = useState(null); // { code, context } shown once after generation
+  const [recoveryInput, setRecoveryInput] = useState("");
+  const [recoverStage, setRecoverStage] = useState("enter_code"); // "enter_code" | "set_pin" | "confirm_pin"
+  const [recoverPin, setRecoverPin] = useState(""); // first PIN entry, compared against confirm
+  const [showRecovery, setShowRecovery] = useState(false); // Settings section open/closed
+  const [confirmRegenRecovery, setConfirmRegenRecovery] = useState(false);
+  const [showRecoveryNudge, setShowRecoveryNudge] = useState(false); // banner for legacy installs missing a recovery code
   const [showExport, setShowExport] = useState(false);
   const [exportStart, setExportStart] = useState(todayStr());
   const [exportEnd, setExportEnd] = useState(todayStr());
@@ -406,6 +460,21 @@ export default function ClockInKiosk() {
       for(const d of [n,p]){ try{ const r=await window.storage.get(corrKey(d)); if(r) allC=allC.concat(JSON.parse(r.value)); }catch(e){console.error(e);} }
       setCorrections(allC);
 
+      // v1.2.0: Worksite (geofence config)
+      try{ const r=await window.storage.get(SK.worksite); if(r){ const ws=JSON.parse(r.value); if(ws&&typeof ws.lat==="number"&&typeof ws.lng==="number"){ setWorksite(ws); setWorksiteDraft({lat:String(ws.lat),lng:String(ws.lng),radius:String(ws.radius||100)}); } } }catch(e){console.error(e);}
+
+      // v1.2.0: Business name
+      try{ const r=await window.storage.get(SK.businessName); if(r){ const name=String(r.value||"").trim(); if(name){ setBusinessName(name); setBusinessNameDraft(name); } } }catch(e){console.error(e);}
+
+      // v1.2.0: Admin recovery code
+      let recoveryData=null;
+      try{ const r=await window.storage.get(SK.adminRecovery); if(r){ const parsed=JSON.parse(r.value); if(parsed?.salt&&parsed?.hash) recoveryData=parsed; } }catch(e){console.error(e);}
+      if(recoveryData) setAdminRecoveryState(recoveryData);
+
+      // Legacy install (post-v1.2.0 upgrade): employees exist and admin PIN exists but no recovery code yet.
+      // Surface a non-dismissable nudge banner inside the admin panel until they generate one.
+      if(upgraded.length>0&&adminData&&!recoveryData) setShowRecoveryNudge(true);
+
       // First-run detection: zero employees → wizard.
       // Resume from kiosk-setup-state if present; otherwise derive from what's in storage.
       if(upgraded.length===0){
@@ -413,8 +482,9 @@ export default function ClockInKiosk() {
         try{ const r=await window.storage.get(SK.setupState); if(r) saved=JSON.parse(r.value); }catch{}
         let step=SETUP_STEPS.WELCOME;
         if(adminData){
-          // Admin PIN already exists (legacy install or mid-wizard crash) — skip ahead.
-          step=SETUP_STEPS.ADD_EMPLOYEE;
+          // Admin PIN exists. If recovery code is missing (legacy mid-wizard from v1.1.x), insert the
+          // recovery step before letting them add employees. Otherwise skip ahead to add_employee.
+          step=recoveryData?SETUP_STEPS.ADD_EMPLOYEE:SETUP_STEPS.RECOVERY_CODE;
         } else if(saved?.step===SETUP_STEPS.ADMIN_PIN||saved?.step===SETUP_STEPS.ADMIN_PIN_CONFIRM){
           step=SETUP_STEPS.ADMIN_PIN;
         }
@@ -431,6 +501,9 @@ export default function ClockInKiosk() {
     const t=setInterval(()=>setBurnOffset({x:Math.floor(Math.random()*BURN_IN_RANGE*2)-BURN_IN_RANGE,y:Math.floor(Math.random()*BURN_IN_RANGE*2)-BURN_IN_RANGE}),BURN_IN_INTERVAL);
     return()=>clearInterval(t);
   },[]);
+
+  // v1.2.0: Sync browser tab title with the configured business name.
+  useEffect(()=>{ document.title = businessName || "Time Clock"; },[businessName]);
 
   // Temp PIN reveal countdown — once revealed, ticks down to dismissed at 0.
   useEffect(()=>{
@@ -548,6 +621,9 @@ export default function ClockInKiosk() {
     if(view===VIEWS.SETUP){
       return handleWizardPinSubmit(entered);
     }
+    if(view===VIEWS.RECOVER_PIN){
+      return handleRecoverPinSubmit(entered);
+    }
     // VIEWS.PIN — try each active employee until a hash matches
     setVerifying(true);
     let matched=null;
@@ -611,6 +687,167 @@ export default function ClockInKiosk() {
     else showMsg("error",`PIN not recognized (${LOCKOUT_THRESHOLD-n} left)`);
   };
 
+  // ─── Admin PIN recovery flow (v1.2.0) ───────────────────────
+  // Two-step: verify recovery code → set new admin PIN (with confirm) → auto-regen recovery code.
+
+  // Verify the typed recovery code against the stored hash. On success, transition to the
+  // numpad-driven new-PIN flow. On failure, use the shared handleFail lockout machinery.
+  const submitRecoveryCode = async () => {
+    if(!adminRecovery){ showMsg("error","No recovery code is set"); return; }
+    const norm=normalizeRecoveryCode(recoveryInput);
+    if(norm.length!==RECOVERY_GROUPS*RECOVERY_GROUP_LEN){ showMsg("error","Recovery code is 12 characters"); return; }
+    setVerifying(true);
+    const ok=await verifyPin(norm,adminRecovery.salt,adminRecovery.hash);
+    setVerifying(false);
+    if(ok){
+      setRecoveryInput("");
+      setRecoverStage("set_pin");
+      setRecoverPin(""); setPin("");
+      setFailedAttempts(0); setMessage(null);
+    } else {
+      setRecoveryInput("");
+      handleFail();
+    }
+  };
+
+  // Numpad handler for the RECOVER_PIN view. Stages: set_pin → confirm_pin → save.
+  const handleRecoverPinSubmit = async (entered) => {
+    if(recoverStage==="set_pin"){
+      setRecoverPin(entered); setPin(""); setRecoverStage("confirm_pin"); setMessage(null);
+      return;
+    }
+    if(recoverStage==="confirm_pin"){
+      if(entered===recoverPin){
+        setVerifying(true);
+        try{
+          // Save new admin PIN
+          const data=await hashPin(entered);
+          await window.storage.set(SK.adminPin,JSON.stringify(data));
+          setAdminPinState(data);
+          addAudit("admin_pin_recovered","Admin PIN reset via recovery code");
+          // Auto-generate a new recovery code (old one is invalidated by being overwritten in storage).
+          const ok=await generateAndPersistRecoveryCode("post_recover");
+          setRecoverPin(""); setPin(""); setRecoverStage("enter_code");
+          if(!ok){
+            // Couldn't regenerate — log them in but warn.
+            showMsg("error","PIN reset but new recovery code failed — generate one from Settings",6000);
+            setView(VIEWS.ADMIN);
+          }
+          // If ok, the RECOVER_PIN view will render the recoveryReveal card and the user
+          // will tap "I've Saved It" to land in admin.
+        }catch(e){ console.error(e); showMsg("error","Failed to save new PIN"); }
+        finally{ setVerifying(false); }
+      } else {
+        setRecoverPin(""); setPin(""); setRecoverStage("set_pin");
+        showMsg("error","PINs didn't match — try again");
+      }
+    }
+  };
+
+  // Called from the recovery-reveal card's "I've Saved It" button after a successful recovery.
+  const acknowledgeRecoveryRevealPostRecover = () => {
+    setRecoveryReveal(null);
+    setView(VIEWS.ADMIN);
+  };
+
+  // Settings: manual regen of the recovery code (admin still knows current PIN).
+  // The audit event is emitted inside generateAndPersistRecoveryCode based on context.
+  const regenerateRecoveryCode = async () => {
+    setConfirmRegenRecovery(false);
+    await generateAndPersistRecoveryCode("regen");
+  };
+
+  // ─── Geofence (v1.2.0) ──────────────────────────────────
+
+  // Wraps navigator.geolocation.getCurrentPosition in a promise with a 5s timeout
+  // and a 30s position cache. Used for both worksite setup and the live punch check.
+  const getDeviceLocation = () => new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error("Geolocation not available"));
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+      (err) => reject(err),
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 30000 }
+    );
+  });
+
+  const useDeviceLocation = async () => {
+    setWorksiteLocating(true);
+    try {
+      const loc = await getDeviceLocation();
+      setWorksiteDraft(d => ({ ...d, lat: loc.lat.toFixed(6), lng: loc.lng.toFixed(6) }));
+      showMsg("success", `Location captured (±${Math.round(loc.accuracy)}m)`);
+    } catch (e) {
+      console.error(e);
+      showMsg("error", "Could not get location — check permissions");
+    } finally {
+      setWorksiteLocating(false);
+    }
+  };
+
+  const saveWorksite = async () => {
+    const lat = parseFloat(worksiteDraft.lat);
+    const lng = parseFloat(worksiteDraft.lng);
+    const radius = parseInt(worksiteDraft.radius, 10);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      showMsg("error", "Invalid latitude or longitude"); return;
+    }
+    if (!Number.isFinite(radius) || radius < 10 || radius > 10000) {
+      showMsg("error", "Radius must be 10–10000 meters"); return;
+    }
+    const ws = { lat, lng, radius };
+    try {
+      await window.storage.set(SK.worksite, JSON.stringify(ws));
+      setWorksite(ws);
+      addAudit("worksite_set", `${lat.toFixed(4)},${lng.toFixed(4)} r=${radius}m`);
+      showMsg("success", "Worksite saved");
+    } catch (e) { console.error(e); showMsg("error", "Failed to save worksite"); noteStorageError(e); }
+  };
+
+  const clearWorksite = async () => {
+    try { await window.storage.delete(SK.worksite); } catch (e) { console.error(e); }
+    setWorksite(null);
+    setWorksiteDraft({ lat: "", lng: "", radius: "100" });
+    addAudit("worksite_cleared", "Geofence disabled");
+    showMsg("success", "Geofence disabled");
+  };
+
+  // ─── Business name (v1.2.0) ─────────────────────────────
+
+  const saveBusinessName = async () => {
+    const name = businessNameDraft.trim().slice(0, 60);
+    try {
+      if (name) await window.storage.set(SK.businessName, name);
+      else await window.storage.delete(SK.businessName);
+      setBusinessName(name);
+      addAudit("business_name_set", name || "(cleared)");
+      showMsg("success", name ? "Business name saved" : "Business name cleared");
+    } catch (e) { console.error(e); showMsg("error", "Failed to save"); noteStorageError(e); }
+  };
+
+  // ─── Admin recovery code (v1.2.0) ───────────────────────
+
+  // Generate a fresh recovery code, hash it, persist the hash, and surface the plaintext once
+  // via the `recoveryReveal` state. The plaintext exists only in state until the admin dismisses.
+  // Emits an audit event tagged with the context so the log shows whether this was the initial
+  // set, a manual regen, an auto-regen after recovery, or a post-upgrade nudge generation.
+  const generateAndPersistRecoveryCode = async (context) => {
+    const code = generateRecoveryCode();
+    // Hash the canonical no-hyphen form so it matches normalizeRecoveryCode() at verify time.
+    const canonical = normalizeRecoveryCode(code);
+    try {
+      const { salt, hash } = await hashPin(canonical);
+      await window.storage.set(SK.adminRecovery, JSON.stringify({ salt, hash }));
+      setAdminRecoveryState({ salt, hash });
+      setRecoveryReveal({ code, context }); // context: "wizard" | "regen" | "post_recover" | "nudge"
+      setShowRecoveryNudge(false); // nudge satisfied
+      addAudit(context === "regen" ? "recovery_code_regenerated" : "recovery_code_set", `via ${context}`);
+      return true;
+    } catch (e) {
+      console.error(e); showMsg("error", "Failed to save recovery code"); noteStorageError(e);
+      return false;
+    }
+  };
+
   // ─── Factory reset ──────────────────────────────────────
 
   const doFactoryReset=async(backupFirst)=>{
@@ -644,8 +881,19 @@ export default function ClockInKiosk() {
           const data=await hashPin(entered);
           await window.storage.set(SK.adminPin,JSON.stringify(data));
           setAdminPinState(data);
-          setSetupPin(""); setPin(""); setSetupStep(SETUP_STEPS.ADD_EMPLOYEE);
-          try{ await window.storage.set(SK.setupState,JSON.stringify({step:SETUP_STEPS.ADD_EMPLOYEE})); }catch{}
+          setSetupPin(""); setPin("");
+          // v1.2.0: After admin PIN is saved, generate the recovery code and show it before
+          // letting them proceed. The wizard insists they save it; "I've Saved It" advances.
+          const ok=await generateAndPersistRecoveryCode("wizard");
+          if(ok){
+            setSetupStep(SETUP_STEPS.RECOVERY_CODE);
+            try{ await window.storage.set(SK.setupState,JSON.stringify({step:SETUP_STEPS.RECOVERY_CODE})); }catch{}
+          } else {
+            // Recovery code generation failed — fall back to letting them proceed without one.
+            // They can generate manually from Settings later.
+            setSetupStep(SETUP_STEPS.ADD_EMPLOYEE);
+            try{ await window.storage.set(SK.setupState,JSON.stringify({step:SETUP_STEPS.ADD_EMPLOYEE})); }catch{}
+          }
         }catch(e){ console.error(e); showMsg("error","Failed to save admin PIN"); }
         finally{ setVerifying(false); }
       } else {
@@ -653,6 +901,14 @@ export default function ClockInKiosk() {
         showMsg("error","PINs didn't match — try again");
       }
     }
+  };
+
+  // Advance the wizard from the recovery_code step → add_employee step. Called when admin
+  // taps "I've Saved It" after seeing the code. Clears the reveal so it's gone forever.
+  const wizardAcknowledgeRecovery=async()=>{
+    setRecoveryReveal(null);
+    setSetupStep(SETUP_STEPS.ADD_EMPLOYEE);
+    try{ await window.storage.set(SK.setupState,JSON.stringify({step:SETUP_STEPS.ADD_EMPLOYEE})); }catch{}
   };
 
   const wizardAddEmployee=async()=>{
@@ -710,7 +966,28 @@ export default function ClockInKiosk() {
     if(lastTime&&Date.now()-lastTime.getTime()<COOLDOWN_SECONDS*1000){
       showMsg("error",`Already punched at ${fmtTs(lastTime.toISOString())}`,4000); return;
     }
-    const entry={id:crypto.randomUUID(),employeeId:currentEmployee.id,type:pendingAction,timestamp:new Date().toISOString(),date:todayStr(),reason:selectedReason||undefined,note:punchNote||undefined};
+    // v1.2.0: Geofence enforcement (employee punches only; admin login is exempt elsewhere).
+    // If a worksite is configured, the device must be within the radius. On geolocation
+    // failure (permission denied, timeout, no GPS), we block — fail closed.
+    let geo=null;
+    if(worksite){
+      try{
+        const loc=await getDeviceLocation();
+        const distance=haversineMeters(worksite.lat,worksite.lng,loc.lat,loc.lng);
+        if(distance>worksite.radius){
+          showMsg("error",`Outside the worksite (~${Math.round(distance)}m away). Move closer to clock ${pendingAction==="in"?"in":"out"}.`,5000);
+          addAudit("geofence_blocked",`${currentEmployee.name}: ${Math.round(distance)}m`);
+          return;
+        }
+        geo={lat:loc.lat,lng:loc.lng,distance:Math.round(distance)};
+      }catch(e){
+        console.error("Geofence check failed:",e);
+        showMsg("error","Location unavailable — cannot verify worksite. Ask admin to disable geofence or fix permissions.",6000);
+        addAudit("geofence_blocked",`${currentEmployee.name}: location error`);
+        return;
+      }
+    }
+    const entry={id:crypto.randomUUID(),employeeId:currentEmployee.id,type:pendingAction,timestamp:new Date().toISOString(),date:todayStr(),reason:selectedReason||undefined,note:punchNote||undefined,geo:geo||undefined};
     try{
       await addEntry(entry);
       setLastPunchInfo({action:pendingAction,name:currentEmployee.name,time:fmtTs(entry.timestamp)});
@@ -1291,6 +1568,10 @@ export default function ClockInKiosk() {
       <div style={{...S.inner,transform:`translate(${burnOffset.x}px,${burnOffset.y}px)`}}>
         {/* Clock header — full size on employee-facing screens, compact on admin so it doesn't eat vertical space */}
         <div style={S.clockHeader} onPointerDown={view===VIEWS.PIN?handleClockDown:undefined} onPointerUp={view===VIEWS.PIN?handleClockUp:undefined} onPointerLeave={view===VIEWS.PIN?handleClockUp:undefined}>
+          {/* v1.2.0: Business name shows subtly above the clock on employee-facing screens. Hidden in admin/setup contexts. */}
+          {businessName&&view!==VIEWS.ADMIN&&view!==VIEWS.SETUP&&(
+            <div style={{fontFamily:"'Outfit',sans-serif",fontSize:fontMin(13),color:"rgba(255,255,255,0.4)",letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:s(6),fontWeight:500}}>{businessName}</div>
+          )}
           <div style={view===VIEWS.ADMIN?S.timeDisplaySm:S.timeDisplay}>{h}:{m}<span style={view===VIEWS.ADMIN?S.secsSm:S.secs}>{sec}</span><span style={view===VIEWS.ADMIN?S.perSm:S.per}>{p}</span></div>
           <div style={view===VIEWS.ADMIN?S.dateDisplaySm:S.dateDisplay}>{dateStr}</div>
         </div>
@@ -1329,7 +1610,16 @@ export default function ClockInKiosk() {
                   ):key}</button>;
               })}
             </div>
-            {view===VIEWS.ADMIN_LOGIN&&<div style={S.footerLinks}><button style={S.linkBtn} onClick={()=>{setView(VIEWS.PIN);setPin("");setMessage(null);}}>Back</button></div>}
+            {view===VIEWS.ADMIN_LOGIN&&(
+              <div style={{...S.footerLinks,display:"flex",gap:SIZE.gap.lg,alignItems:"center"}}>
+                <button style={S.linkBtn} onClick={()=>{setView(VIEWS.PIN);setPin("");setMessage(null);}}>Back</button>
+                {adminRecovery&&(
+                  <button style={{...S.linkBtn,fontSize:fontMin(12)}} onClick={()=>{
+                    setView(VIEWS.RECOVER_PIN); setRecoverStage("enter_code"); setRecoveryInput(""); setRecoverPin(""); setPin(""); setMessage(null); setFailedAttempts(0);
+                  }}>Forgot PIN?</button>
+                )}
+              </div>
+            )}
             {view===VIEWS.PIN_SETUP&&(
               <div style={S.footerLinks}><button style={S.linkBtn} onClick={()=>{
                 if(changingOwnPin){
@@ -1338,6 +1628,73 @@ export default function ClockInKiosk() {
                   setView(VIEWS.PIN); setPin(""); setCurrentEmployee(null); setSetupPin(""); setSetupStage("enter"); setMessage(null);
                 }
               }}>Cancel</button></div>
+            )}
+          </div>
+        )}
+
+        {/* Recover PIN (Forgot PIN flow) */}
+        {view===VIEWS.RECOVER_PIN&&(
+          <div style={panelStyle}>
+            {recoveryReveal?.context==="post_recover"?(
+              <>
+                <div style={S.empName}>New Recovery Code</div>
+                <div style={{...S.sectionLabel,justifyContent:"center",marginBottom:s(20)}}>Save this — old code no longer works</div>
+                <div style={{width:"100%",padding:`${s(24)}px ${s(20)}px`,marginBottom:s(20),background:"rgba(74,170,153,0.06)",border:"1px solid rgba(74,170,153,0.3)",borderRadius:SIZE.radius.md,textAlign:"center"}}>
+                  <div style={{fontSize:s(26),fontWeight:600,color:"#4a9",letterSpacing:"0.18em",fontFamily:"'Outfit',sans-serif",marginBottom:s(12)}}>{recoveryReveal.code}</div>
+                  <div style={{fontSize:fontMin(13),color:"rgba(255,255,255,0.65)",lineHeight:1.5,maxWidth:s(340),margin:"0 auto"}}>
+                    Write this down or save in a password manager. <strong style={{color:"rgba(255,255,255,0.9)"}}>It will not be shown again.</strong>
+                  </div>
+                </div>
+                <button style={S.btnInLg} onClick={acknowledgeRecoveryRevealPostRecover}>I've Saved It</button>
+              </>
+            ):recoverStage==="enter_code"?(
+              <>
+                <div style={S.panelLabel}>Recover Admin PIN</div>
+                <div style={{...S.revealHelp,marginBottom:s(20)}}>Enter the recovery code you saved when you first set up the kiosk.</div>
+                {message&&<div style={{...S.toast,color:message.type==="error"?"#e05555":"#4a9"}}>{message.text}</div>}
+                {verifying&&<div style={{...S.toast,color:"rgba(255,255,255,0.4)"}}>Verifying…</div>}
+                {isLockedOut&&<div style={S.lockout}>Locked — try again in {lockoutCountdown}s</div>}
+                <input
+                  style={{...S.noteInput,textAlign:"center",letterSpacing:"0.18em",fontFamily:"'Outfit',sans-serif",fontSize:s(18),fontWeight:500}}
+                  placeholder="XXXX-XXXX-XXXX"
+                  value={recoveryInput}
+                  maxLength={14}
+                  autoFocus
+                  disabled={isLockedOut||verifying}
+                  onChange={e=>setRecoveryInput(e.target.value.toUpperCase())}
+                  onKeyDown={e=>{ if(e.key==="Enter"&&!isLockedOut&&!verifying) submitRecoveryCode(); }}
+                />
+                <button style={{...S.btnInLg,marginTop:s(16),opacity:isLockedOut||verifying?0.4:1}} disabled={isLockedOut||verifying} onClick={submitRecoveryCode}>Verify Code</button>
+                <div style={S.footerLinks}>
+                  <button style={S.linkBtn} onClick={()=>{ setView(VIEWS.ADMIN_LOGIN); setRecoveryInput(""); setMessage(null); setFailedAttempts(0); }}>Back</button>
+                </div>
+              </>
+            ):(
+              // Stages "set_pin" and "confirm_pin" — use the same numpad pattern as PIN_SETUP.
+              <>
+                <div style={{...S.empName,marginBottom:SIZE.gap.md}}>Admin</div>
+                <div style={S.panelLabel}>{recoverStage==="set_pin"?"Set new admin PIN":"Confirm new admin PIN"}</div>
+                <div style={S.pinDots}>{[0,1,2,3,4,5].map(i=>(<div key={i} style={{...S.dot,...(i<pin.length?{background:"rgba(255,255,255,0.9)",boxShadow:"0 0 8px rgba(255,255,255,0.15)"}:{})}}/>))}</div>
+                {message&&<div style={{...S.toast,color:message.type==="error"?"#e05555":"#4a9"}}>{message.text}</div>}
+                {verifying&&<div style={{...S.toast,color:"rgba(255,255,255,0.4)"}}>Saving…</div>}
+                <div style={S.numpad}>
+                  {[1,2,3,4,5,6,7,8,9,null,0,"del"].map((key,i)=>{
+                    const dis=key===null||verifying;
+                    return <button key={i} style={{...S.numKey,...(key===null?S.numKeyEmpty:{}),...(key==="del"?S.numKeyMeta:{}),...(pressedKey===i&&!dis?S.numKeyPressed:{}),...(verifying&&key!==null?{opacity:0.3}:{})}}
+                      onPointerDown={()=>!dis&&setPressedKey(i)} onPointerUp={()=>setPressedKey(null)} onPointerLeave={()=>setPressedKey(null)}
+                      onClick={()=>{if(dis)return;if(key==="del")setPin(p=>p.slice(0,-1));else handlePinDigit(String(key));}} disabled={dis}>{key==="del"?(
+                        <svg width={s(28)} height={s(28)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Delete previous digit">
+                          <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
+                          <line x1="18" y1="9" x2="12" y2="15"/>
+                          <line x1="12" y1="9" x2="18" y2="15"/>
+                        </svg>
+                      ):key}</button>;
+                  })}
+                </div>
+                <div style={S.footerLinks}>
+                  <button style={S.linkBtn} onClick={()=>{ setView(VIEWS.ADMIN_LOGIN); setRecoverStage("enter_code"); setRecoverPin(""); setPin(""); setMessage(null); }}>Cancel</button>
+                </div>
+              </>
             )}
           </div>
         )}
@@ -1375,6 +1732,26 @@ export default function ClockInKiosk() {
                   ):key}</button>;
                   })}
                 </div>
+              </>
+            )}
+
+            {setupStep===SETUP_STEPS.RECOVERY_CODE&&(
+              <>
+                <div style={S.empName}>Save This Recovery Code</div>
+                <div style={{...S.sectionLabel,justifyContent:"center",marginBottom:s(20)}}>One-time only</div>
+                {recoveryReveal?(
+                  <>
+                    <div style={{width:"100%",padding:`${s(24)}px ${s(20)}px`,marginBottom:s(20),background:"rgba(74,170,153,0.06)",border:"1px solid rgba(74,170,153,0.3)",borderRadius:SIZE.radius.md,textAlign:"center"}}>
+                      <div style={{fontSize:s(26),fontWeight:600,color:"#4a9",letterSpacing:"0.18em",fontFamily:"'Outfit',sans-serif",marginBottom:s(12),wordSpacing:s(4)}}>{recoveryReveal.code}</div>
+                      <div style={{fontSize:fontMin(13),color:"rgba(255,255,255,0.65)",lineHeight:1.5,maxWidth:s(340),margin:"0 auto"}}>
+                        Write this down on paper or save it in a password manager. You'll need it if you ever forget your admin PIN. <strong style={{color:"rgba(255,255,255,0.9)"}}>It will not be shown again.</strong>
+                      </div>
+                    </div>
+                    <button style={S.btnInLg} onClick={wizardAcknowledgeRecovery}>I've Saved It</button>
+                  </>
+                ):(
+                  <div style={{...S.emptyText,maxWidth:s(340)}}>Generating recovery code…</div>
+                )}
               </>
             )}
 
@@ -1510,6 +1887,16 @@ export default function ClockInKiosk() {
               <div style={{display:"flex",alignItems:"center",gap:s(10),padding:`${s(10)}px ${s(12)}px`,marginBottom:s(12),background:"rgba(224,153,85,0.08)",border:"1px solid rgba(224,153,85,0.3)",borderRadius:SIZE.radius.sm,fontSize:fontMin(12),color:"#e09955"}}>
                 <span style={{flex:1}}>Storage is nearly full — export a backup and archive old entries.</span>
                 <button style={{...S.removeBtn,color:"#e09955",fontSize:fontMin(11),padding:`${s(2)}px ${s(8)}px`}} onClick={()=>setStorageWarningDismissed(true)}>Dismiss</button>
+              </div>
+            )}
+            {/* v1.2.0: Recovery code nudge — legacy install (employees+admin PIN but no recovery code yet). Non-dismissable until they generate one. */}
+            {showRecoveryNudge&&!recoveryReveal&&(
+              <div style={{display:"flex",alignItems:"center",gap:s(10),padding:`${s(12)}px ${s(14)}px`,marginBottom:s(12),background:"rgba(74,170,153,0.08)",border:"1px solid rgba(74,170,153,0.3)",borderRadius:SIZE.radius.sm,fontSize:fontMin(13),color:"rgba(255,255,255,0.85)",flexWrap:"wrap"}}>
+                <span style={{flex:1,minWidth:s(180),lineHeight:1.4}}>Add a recovery code so you can reset your admin PIN if forgotten.</span>
+                <button style={{...S.adminAddBtn,background:"rgba(74,170,153,0.18)",color:"#4a9",fontSize:fontMin(12),fontWeight:600}} onClick={async()=>{
+                  const ok=await generateAndPersistRecoveryCode("nudge");
+                  if(ok){ setShowRecovery(true); setAdminTab("settings"); }
+                }}>Generate Recovery Code</button>
               </div>
             )}
             {message&&<div style={{...S.toast,color:message.type==="error"?"#e05555":"#4a9",marginBottom:s(12)}}>{message.text}</div>}
@@ -1956,6 +2343,82 @@ export default function ClockInKiosk() {
                       await saveAdminPin(newAdminPinInput); addAudit("change_admin_pin","Admin PIN changed");
                       setChangingAdminPin(false); setNewAdminPinInput(""); showMsg("success","Admin PIN updated");
                     }}>Save</button>
+                  </div>
+                )}
+
+                {/* v1.2.0: Recovery Code */}
+                <SectionHead label={`Recovery Code ${adminRecovery?"":"(not set)"}`} open={showRecovery} onClick={()=>{setShowRecovery(!showRecovery);setConfirmRegenRecovery(false);}}/>
+                {showRecovery&&(
+                  <div style={{marginTop:s(8)}}>
+                    {recoveryReveal?.context==="regen"||recoveryReveal?.context==="nudge"?(
+                      <div style={{padding:`${s(16)}px ${s(16)}px`,background:"rgba(74,170,153,0.06)",border:"1px solid rgba(74,170,153,0.3)",borderRadius:SIZE.radius.md,textAlign:"center"}}>
+                        <div style={{fontSize:s(22),fontWeight:600,color:"#4a9",letterSpacing:"0.18em",marginBottom:s(8)}}>{recoveryReveal.code}</div>
+                        <div style={{fontSize:fontMin(12),color:"rgba(255,255,255,0.6)",lineHeight:1.5,marginBottom:s(12)}}>Save this somewhere safe. <strong style={{color:"rgba(255,255,255,0.9)"}}>It will not be shown again.</strong> Any previous recovery code is no longer valid.</div>
+                        <button style={{...S.adminAddBtn,width:"100%"}} onClick={()=>setRecoveryReveal(null)}>I've Saved It</button>
+                      </div>
+                    ):(
+                      <div>
+                        <div style={{fontSize:fontMin(12),color:"rgba(255,255,255,0.55)",marginBottom:s(10),lineHeight:1.5}}>
+                          {adminRecovery
+                            ?"A recovery code is set. Use it from the admin login screen if you ever forget your PIN. Regenerate to invalidate the old code (e.g., if you lost the paper)."
+                            :"No recovery code is set. Generate one and save it somewhere safe so you can reset your admin PIN if you forget it."}
+                        </div>
+                        {confirmRegenRecovery?(
+                          <div style={{display:"flex",gap:SIZE.gap.sm,flexWrap:"wrap"}}>
+                            <button style={{...S.adminAddBtn,flex:1,background:"rgba(224,153,85,0.15)",color:"#e09955",fontSize:fontMin(13)}} onClick={regenerateRecoveryCode}>Yes — generate new code</button>
+                            <button style={S.removeBtn} onClick={()=>setConfirmRegenRecovery(false)}>Cancel</button>
+                          </div>
+                        ):(
+                          <button style={{...S.adminAddBtn,width:"100%"}} onClick={()=>{
+                            if(adminRecovery) setConfirmRegenRecovery(true);
+                            else regenerateRecoveryCode();
+                          }}>{adminRecovery?"Regenerate Recovery Code":"Generate Recovery Code"}</button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* v1.2.0: Business Name */}
+                <SectionHead label="Business Name" open={showBusinessName} onClick={()=>{setShowBusinessName(!showBusinessName);setBusinessNameDraft(businessName);}}/>
+                {showBusinessName&&(
+                  <div style={{marginTop:s(8)}}>
+                    <div style={{fontSize:fontMin(12),color:"rgba(255,255,255,0.55)",marginBottom:s(10),lineHeight:1.5}}>
+                      Shown above the clock on employee screens and in the browser tab title. Leave blank to hide.
+                    </div>
+                    <div style={{display:"flex",gap:SIZE.gap.sm,flexWrap:"wrap"}}>
+                      <input style={{...S.adminInput,flex:1,minWidth:s(160)}} placeholder="e.g. Acme Plumbing" value={businessNameDraft} maxLength={60} onChange={e=>setBusinessNameDraft(e.target.value)}/>
+                      <button style={S.adminAddBtn} onClick={saveBusinessName}>Save</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* v1.2.0: Worksite Geofence */}
+                <SectionHead label={`Worksite Geofence ${worksite?"":"(disabled)"}`} open={showWorksite} onClick={()=>setShowWorksite(!showWorksite)}/>
+                {showWorksite&&(
+                  <div style={{marginTop:s(8)}}>
+                    <div style={{fontSize:fontMin(12),color:"rgba(255,255,255,0.55)",marginBottom:s(10),lineHeight:1.5}}>
+                      Block clock-in/out attempts from outside a configured radius. Admin login is exempt — geofence applies only to employee punches.
+                    </div>
+                    {worksite&&(
+                      <div style={{padding:`${s(10)}px ${s(12)}px`,background:"rgba(74,170,153,0.05)",border:"1px solid rgba(74,170,153,0.2)",borderRadius:SIZE.radius.sm,fontSize:fontMin(12),color:"rgba(255,255,255,0.65)",marginBottom:s(12),fontFamily:"'Outfit',sans-serif"}}>
+                        Active: <strong style={{color:"#4a9"}}>{worksite.lat.toFixed(4)}, {worksite.lng.toFixed(4)}</strong> · radius <strong style={{color:"#4a9"}}>{worksite.radius}m</strong>
+                      </div>
+                    )}
+                    <div style={{display:"flex",flexDirection:"column",gap:s(10)}}>
+                      <div style={{display:"flex",gap:SIZE.gap.sm,flexWrap:"wrap"}}>
+                        <input style={{...S.adminInput,flex:1,minWidth:s(120)}} placeholder="Latitude" inputMode="decimal" value={worksiteDraft.lat} onChange={e=>setWorksiteDraft(d=>({...d,lat:e.target.value}))}/>
+                        <input style={{...S.adminInput,flex:1,minWidth:s(120)}} placeholder="Longitude" inputMode="decimal" value={worksiteDraft.lng} onChange={e=>setWorksiteDraft(d=>({...d,lng:e.target.value}))}/>
+                      </div>
+                      <div style={{display:"flex",gap:SIZE.gap.sm,alignItems:"center"}}>
+                        <input style={{...S.adminInput,width:s(120),flex:"none"}} placeholder="Radius m" inputMode="numeric" value={worksiteDraft.radius} onChange={e=>setWorksiteDraft(d=>({...d,radius:e.target.value.replace(/\D/g,"")}))}/>
+                        <button style={{...S.adminAddBtn,flex:1,fontSize:fontMin(12)}} disabled={worksiteLocating} onClick={useDeviceLocation}>{worksiteLocating?"Locating…":"Use This Device's Location"}</button>
+                      </div>
+                      <div style={{display:"flex",gap:SIZE.gap.sm}}>
+                        <button style={{...S.adminAddBtn,flex:1}} onClick={saveWorksite}>Save Worksite</button>
+                        {worksite&&<button style={{...S.removeBtn,color:"#e05555"}} onClick={clearWorksite}>Disable</button>}
+                      </div>
+                    </div>
                   </div>
                 )}
 
