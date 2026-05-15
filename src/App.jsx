@@ -14,7 +14,7 @@ if (typeof crypto !== "undefined" && !crypto.randomUUID && crypto.getRandomValue
   };
 }
 
-const FONT_URL = "https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap";
+const FONT_URL = "https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap";
 
 const SK = {
   employees: "kiosk-employees",
@@ -1117,101 +1117,102 @@ export default function ClockInKiosk() {
   // Styles object — memoized to skip rebuilds when scale doesn't change.
   // Closes over s/touchMin/fontMin/SIZE from this render via the factory.
   const S = useMemo(() => ({
-    container:{position:"relative",width:"100%",height:"100vh",minHeight:s(600),background:"#0b0b0b",display:"flex",alignItems:"center",justifyContent:"center",overflow:"auto",userSelect:"none"},
+    container:{position:"relative",width:"100%",height:"100vh",minHeight:s(600),background:"#0b0b0b",display:"flex",alignItems:"center",justifyContent:"center",overflow:"auto",userSelect:"none",fontVariantNumeric:"tabular-nums"},
     grain:{position:"fixed",inset:0,opacity:0.025,backgroundImage:`url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,backgroundSize:"128px 128px",pointerEvents:"none"},
     inner:{display:"flex",flexDirection:"column",alignItems:"center",gap:SIZE.gap.xxl,padding:`${s(40)}px ${s(20)}px`,width:"100%",maxWidth:s(480),zIndex:1,transition:"transform 2s ease"},
     clockHeader:{textAlign:"center",cursor:"default",touchAction:"manipulation"},
-    timeDisplay:{fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.display,fontWeight:300,color:"rgba(255,255,255,0.85)",letterSpacing:"-0.02em",lineHeight:1},
-    // Admin-context clock: same shape, smaller scale — admin reads data, not glances from across the room.
-    timeDisplaySm:{fontFamily:"'DM Mono',monospace",fontSize:s(36),fontWeight:300,color:"rgba(255,255,255,0.7)",letterSpacing:"-0.02em",lineHeight:1},
+    // Employee-facing clock at 500 weight: visible at distance under fluorescent / window glare without going as heavy as 600.
+    timeDisplay:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.display,fontWeight:500,color:"rgba(255,255,255,0.88)",letterSpacing:"-0.02em",lineHeight:1},
+    // Admin-context clock: same shape, smaller scale, lighter — admin reads data sitting at the kiosk, no glare concern.
+    timeDisplaySm:{fontFamily:"'Outfit',sans-serif",fontSize:s(36),fontWeight:400,color:"rgba(255,255,255,0.7)",letterSpacing:"-0.02em",lineHeight:1},
     secsSm:{fontSize:s(16),color:"rgba(255,255,255,0.25)",marginLeft:s(3)},
     perSm:{fontSize:fontMin(12),color:"rgba(255,255,255,0.2)",marginLeft:s(4),letterSpacing:"0.1em"},
-    dateDisplaySm:{fontFamily:"'Instrument Sans',sans-serif",fontSize:fontMin(12),color:"rgba(255,255,255,0.2)",marginTop:s(4),letterSpacing:"0.02em"},
+    dateDisplaySm:{fontFamily:"'Outfit',sans-serif",fontSize:fontMin(12),color:"rgba(255,255,255,0.2)",marginTop:s(4),letterSpacing:"0.02em"},
     secs:{fontSize:s(22),color:"rgba(255,255,255,0.25)",marginLeft:s(4)},
     per:{fontSize:SIZE.font.md,color:"rgba(255,255,255,0.2)",marginLeft:s(6),letterSpacing:"0.1em"},
-    dateDisplay:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,color:"rgba(255,255,255,0.25)",marginTop:s(8),letterSpacing:"0.02em"},
+    dateDisplay:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,color:"rgba(255,255,255,0.25)",marginTop:s(8),letterSpacing:"0.02em"},
     panel:{width:"100%",display:"flex",flexDirection:"column",alignItems:"center"},
-    panelLabel:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.md,fontWeight:500,color:"rgba(255,255,255,0.35)",letterSpacing:"0.25em",textTransform:"uppercase",marginBottom:SIZE.gap.xl},
+    panelLabel:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.md,fontWeight:500,color:"rgba(255,255,255,0.35)",letterSpacing:"0.25em",textTransform:"uppercase",marginBottom:SIZE.gap.xl},
     pinDots:{display:"flex",gap:s(18),marginBottom:SIZE.gap.xl},
     dot:{width:s(18),height:s(18),borderRadius:"50%",border:"1px solid rgba(255,255,255,0.22)",background:"rgba(255,255,255,0.04)",transition:"all 0.15s ease"},
     numpad:{display:"grid",gridTemplateColumns:`repeat(3,${touchMin(88)}px)`,gap:s(10),justifyContent:"center"},
-    numKey:{width:touchMin(88),height:touchMin(72),border:"1px solid rgba(255,255,255,0.08)",borderRadius:SIZE.radius.md,background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.8)",fontSize:SIZE.font.xl,fontFamily:"'DM Mono',monospace",fontWeight:400,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.1s ease",outline:"none",touchAction:"manipulation"},
+    numKey:{width:touchMin(88),height:touchMin(72),border:"1px solid rgba(255,255,255,0.08)",borderRadius:SIZE.radius.md,background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.85)",fontSize:SIZE.font.xl,fontFamily:"'Outfit',sans-serif",fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.1s ease",outline:"none",touchAction:"manipulation"},
     numKeyPressed:{transform:"scale(0.93)",background:"rgba(255,255,255,0.1)"},
     numKeyEmpty:{border:"none",background:"transparent",cursor:"default"},
     numKeyMeta:{fontSize:SIZE.font.lg,color:"rgba(255,255,255,0.3)",border:"1px solid rgba(255,255,255,0.05)"},
-    toast:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,fontWeight:500,marginBottom:SIZE.gap.lg,letterSpacing:"0.02em",textAlign:"center",maxWidth:s(340)},
-    lockout:{fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.md,color:"#e05555",marginBottom:SIZE.gap.lg,padding:`${s(10)}px ${s(22)}px`,border:"1px solid rgba(224,85,85,0.2)",borderRadius:SIZE.radius.sm,background:"rgba(224,85,85,0.05)"},
+    toast:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,fontWeight:500,marginBottom:SIZE.gap.lg,letterSpacing:"0.02em",textAlign:"center",maxWidth:s(340)},
+    lockout:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.md,color:"#e05555",marginBottom:SIZE.gap.lg,padding:`${s(10)}px ${s(22)}px`,border:"1px solid rgba(224,85,85,0.2)",borderRadius:SIZE.radius.sm,background:"rgba(224,85,85,0.05)"},
     footerLinks:{marginTop:SIZE.gap.xl},
-    linkBtn:{background:"none",border:"none",color:"rgba(255,255,255,0.35)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,cursor:"pointer",letterSpacing:"0.1em",textTransform:"uppercase",padding:`${s(14)}px ${s(20)}px`,minHeight:SIZE.touch.min,outline:"none",touchAction:"manipulation"},
-    empName:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.xxl,fontWeight:600,color:"rgba(255,255,255,0.92)",marginBottom:s(12),textAlign:"center",lineHeight:1.1},
-    statusBadge:{display:"flex",alignItems:"center",gap:s(10),fontFamily:"'Instrument Sans',sans-serif",fontSize:s(17),fontWeight:500,color:"rgba(255,255,255,0.6)",marginBottom:s(28),letterSpacing:"0.04em"},
+    linkBtn:{background:"none",border:"none",color:"rgba(255,255,255,0.35)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,cursor:"pointer",letterSpacing:"0.1em",textTransform:"uppercase",padding:`${s(14)}px ${s(20)}px`,minHeight:SIZE.touch.min,outline:"none",touchAction:"manipulation"},
+    empName:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.xxl,fontWeight:600,color:"rgba(255,255,255,0.92)",marginBottom:s(12),textAlign:"center",lineHeight:1.1},
+    statusBadge:{display:"flex",alignItems:"center",gap:s(10),fontFamily:"'Outfit',sans-serif",fontSize:s(17),fontWeight:500,color:"rgba(255,255,255,0.6)",marginBottom:s(28),letterSpacing:"0.04em"},
     statusDot:{width:s(12),height:s(12),borderRadius:"50%"},
-    actionTime:{fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.lg,color:"rgba(255,255,255,0.3)",marginBottom:SIZE.gap.xl},
-    btnInLg:{width:"100%",padding:`0 ${s(24)}px`,borderRadius:SIZE.radius.lg,border:"none",background:"#1a3d2a",color:"#4a9",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.lg,fontWeight:700,cursor:"pointer",letterSpacing:"0.05em",transition:"all 0.15s ease",outline:"none",height:SIZE.touch.large,minHeight:SIZE.touch.large,touchAction:"manipulation"},
-    btnOutLg:{width:"100%",padding:`0 ${s(24)}px`,borderRadius:SIZE.radius.lg,border:"none",background:"#3d1a1a",color:"#e05555",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.lg,fontWeight:700,cursor:"pointer",letterSpacing:"0.05em",transition:"all 0.15s ease",outline:"none",height:SIZE.touch.large,minHeight:SIZE.touch.large,touchAction:"manipulation"},
+    actionTime:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.lg,fontWeight:500,color:"rgba(255,255,255,0.4)",marginBottom:SIZE.gap.xl},
+    btnInLg:{width:"100%",padding:`0 ${s(24)}px`,borderRadius:SIZE.radius.lg,border:"none",background:"#1a3d2a",color:"#4a9",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.lg,fontWeight:700,cursor:"pointer",letterSpacing:"0.05em",transition:"all 0.15s ease",outline:"none",height:SIZE.touch.large,minHeight:SIZE.touch.large,touchAction:"manipulation"},
+    btnOutLg:{width:"100%",padding:`0 ${s(24)}px`,borderRadius:SIZE.radius.lg,border:"none",background:"#3d1a1a",color:"#e05555",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.lg,fontWeight:700,cursor:"pointer",letterSpacing:"0.05em",transition:"all 0.15s ease",outline:"none",height:SIZE.touch.large,minHeight:SIZE.touch.large,touchAction:"manipulation"},
     successBox:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:SIZE.gap.sm,padding:`${s(20)}px 0`},
-    successCheck:{fontSize:s(84),lineHeight:1,color:"#4a9",marginBottom:s(12),fontWeight:300},
-    successAction:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.md,fontWeight:500,color:"rgba(255,255,255,0.4)",letterSpacing:"0.25em",textTransform:"uppercase"},
-    successName:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.xxl,fontWeight:600,color:"rgba(255,255,255,0.92)",textAlign:"center",lineHeight:1.1},
-    successTime:{fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.xl,color:"rgba(255,255,255,0.5)",marginTop:s(4)},
+    successCheck:{fontSize:s(84),lineHeight:1,color:"#4a9",marginBottom:s(12),fontWeight:500},
+    successAction:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.md,fontWeight:500,color:"rgba(255,255,255,0.4)",letterSpacing:"0.25em",textTransform:"uppercase"},
+    successName:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.xxl,fontWeight:600,color:"rgba(255,255,255,0.92)",textAlign:"center",lineHeight:1.1},
+    successTime:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.xl,color:"rgba(255,255,255,0.5)",marginTop:s(4)},
     tabBar:{display:"flex",gap:2,width:"100%",marginBottom:SIZE.gap.lg,borderBottom:"1px solid rgba(255,255,255,0.06)",paddingBottom:0},
-    tab:{background:"none",border:"none",borderBottom:"3px solid transparent",color:"rgba(255,255,255,0.3)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,cursor:"pointer",padding:`${s(12)}px ${s(14)}px`,minHeight:SIZE.touch.min,outline:"none",touchAction:"manipulation",letterSpacing:"0.05em",position:"relative",marginBottom:-1},
+    tab:{background:"none",border:"none",borderBottom:"3px solid transparent",color:"rgba(255,255,255,0.3)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,cursor:"pointer",padding:`${s(12)}px ${s(14)}px`,minHeight:SIZE.touch.min,outline:"none",touchAction:"manipulation",letterSpacing:"0.05em",position:"relative",marginBottom:-1},
     tabActive:{color:"#4a9",borderBottomColor:"#4a9"},
-    sectionHead:{background:"none",border:"none",color:"rgba(255,255,255,0.3)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,cursor:"pointer",padding:`${s(12)}px 0`,minHeight:SIZE.touch.min,outline:"none",touchAction:"manipulation",letterSpacing:"0.1em",textTransform:"uppercase",width:"100%",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:SIZE.gap.lg},
+    sectionHead:{background:"none",border:"none",color:"rgba(255,255,255,0.3)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,cursor:"pointer",padding:`${s(12)}px 0`,minHeight:SIZE.touch.min,outline:"none",touchAction:"manipulation",letterSpacing:"0.1em",textTransform:"uppercase",width:"100%",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:SIZE.gap.lg},
     badge:{background:"rgba(224,85,85,0.15)",color:"#e05555",fontSize:SIZE.font.xs,padding:`${s(2)}px ${s(6)}px`,borderRadius:s(10),marginLeft:s(6),fontWeight:500},
     badgeRed:{background:"rgba(224,85,85,0.1)",color:"#e05555",fontSize:fontMin(10),padding:`${s(3)}px ${s(9)}px`,borderRadius:s(10),fontWeight:500},
     badgeOrange:{background:"rgba(224,153,85,0.1)",color:"#e09955",fontSize:fontMin(10),padding:`${s(3)}px ${s(9)}px`,borderRadius:s(10),fontWeight:500},
     badgeGreen:{background:"rgba(68,170,153,0.1)",color:"#4a9",fontSize:fontMin(10),padding:`${s(3)}px ${s(9)}px`,borderRadius:s(10),fontWeight:500},
     manualBadge:{background:"rgba(102,153,204,0.15)",color:"#6699cc",fontSize:fontMin(10),padding:`${s(1)}px ${s(5)}px`,borderRadius:s(4),fontWeight:600,letterSpacing:"0.05em"},
     chipRow:{display:"flex",gap:s(10),flexWrap:"wrap",justifyContent:"center"},
-    chip:{background:"rgba(255,255,255,0.04)",border:`1px solid rgba(255,255,255,0.18)`,borderRadius:s(24),padding:`${s(14)}px ${s(20)}px`,minHeight:touchMin(52),display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:SIZE.font.sm,fontWeight:500,color:"rgba(255,255,255,0.85)",cursor:"pointer",fontFamily:"'Instrument Sans',sans-serif",outline:"none",touchAction:"manipulation",transition:"all 0.1s ease"},
+    chip:{background:"rgba(255,255,255,0.04)",border:`1px solid rgba(255,255,255,0.18)`,borderRadius:s(24),padding:`${s(14)}px ${s(20)}px`,minHeight:touchMin(52),display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:SIZE.font.sm,fontWeight:500,color:"rgba(255,255,255,0.85)",cursor:"pointer",fontFamily:"'Outfit',sans-serif",outline:"none",touchAction:"manipulation",transition:"all 0.1s ease"},
     chipActive:{background:"rgba(68,170,153,0.22)",borderColor:"#4a9",color:"#4a9",fontWeight:600},
     // Toggle-button pair for IN/OUT picker on the Actions tab — same shape as a chip but full-row split.
     toggleRow:{display:"flex",gap:s(10),width:"100%"},
-    toggleBtn:{flex:1,background:"rgba(255,255,255,0.04)",border:`1px solid rgba(255,255,255,0.18)`,borderRadius:SIZE.radius.sm,padding:`${s(12)}px ${s(16)}px`,minHeight:touchMin(48),fontSize:SIZE.font.sm,fontWeight:500,color:"rgba(255,255,255,0.7)",cursor:"pointer",fontFamily:"'Instrument Sans',sans-serif",outline:"none",touchAction:"manipulation",transition:"all 0.1s ease",letterSpacing:"0.04em"},
+    toggleBtn:{flex:1,background:"rgba(255,255,255,0.04)",border:`1px solid rgba(255,255,255,0.18)`,borderRadius:SIZE.radius.sm,padding:`${s(12)}px ${s(16)}px`,minHeight:touchMin(48),fontSize:SIZE.font.sm,fontWeight:500,color:"rgba(255,255,255,0.7)",cursor:"pointer",fontFamily:"'Outfit',sans-serif",outline:"none",touchAction:"manipulation",transition:"all 0.1s ease",letterSpacing:"0.04em"},
     toggleBtnInActive:{background:"rgba(74,170,153,0.18)",borderColor:"#4a9",color:"#4a9",fontWeight:600},
     toggleBtnOutActive:{background:"rgba(224,85,85,0.18)",borderColor:"#e05555",color:"#e05555",fontWeight:600},
     // Full-width note input — used on action screen + flag flow + manual entry.
-    noteInput:{width:"100%",boxSizing:"border-box",padding:`0 ${s(16)}px`,minHeight:touchMin(52),borderRadius:SIZE.radius.sm,border:"1px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.9)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.md,outline:"none"},
+    noteInput:{width:"100%",boxSizing:"border-box",padding:`0 ${s(16)}px`,minHeight:touchMin(52),borderRadius:SIZE.radius.sm,border:"1px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.9)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.md,outline:"none"},
     // Smaller-cap admin section label — replaces inline {...panelLabel, fontSize:11, marginBottom:8} pattern.
-    sectionLabel:{fontFamily:"'Instrument Sans',sans-serif",fontSize:fontMin(11),fontWeight:600,color:"rgba(255,255,255,0.5)",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:s(12),display:"flex",alignItems:"center",gap:s(8)},
+    sectionLabel:{fontFamily:"'Outfit',sans-serif",fontSize:fontMin(11),fontWeight:600,color:"rgba(255,255,255,0.5)",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:s(12),display:"flex",alignItems:"center",gap:s(8)},
     adminForm:{display:"flex",gap:SIZE.gap.sm,width:"100%",marginBottom:SIZE.gap.lg,flexWrap:"wrap"},
-    adminInput:{flex:1,padding:`0 ${s(14)}px`,minHeight:SIZE.touch.min,borderRadius:SIZE.radius.sm,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.85)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,outline:"none"},
-    dateInput:{flex:1,padding:`0 ${s(10)}px`,minHeight:SIZE.touch.min,borderRadius:SIZE.radius.sm,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.85)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,outline:"none",colorScheme:"dark"},
-    adminAddBtn:{padding:`0 ${s(20)}px`,borderRadius:SIZE.radius.sm,border:"none",background:"rgba(255,255,255,0.08)",color:"rgba(255,255,255,0.75)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,fontWeight:500,cursor:"pointer",outline:"none",touchAction:"manipulation",minHeight:SIZE.touch.min},
+    adminInput:{flex:1,padding:`0 ${s(14)}px`,minHeight:SIZE.touch.min,borderRadius:SIZE.radius.sm,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.85)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,outline:"none"},
+    dateInput:{flex:1,padding:`0 ${s(10)}px`,minHeight:SIZE.touch.min,borderRadius:SIZE.radius.sm,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.85)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,outline:"none",colorScheme:"dark"},
+    adminAddBtn:{padding:`0 ${s(20)}px`,borderRadius:SIZE.radius.sm,border:"none",background:"rgba(255,255,255,0.08)",color:"rgba(255,255,255,0.75)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,fontWeight:500,cursor:"pointer",outline:"none",touchAction:"manipulation",minHeight:SIZE.touch.min},
     empList:{width:"100%",borderTop:"1px solid rgba(255,255,255,0.06)"},
-    empRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:`${s(16)}px 0`,borderBottom:"1px solid rgba(255,255,255,0.04)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.md,gap:SIZE.gap.sm,flexWrap:"wrap"},
+    empRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:`${s(16)}px 0`,borderBottom:"1px solid rgba(255,255,255,0.04)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.md,gap:SIZE.gap.sm,flexWrap:"wrap"},
     empInfo:{display:"flex",alignItems:"center",gap:SIZE.gap.sm,flexWrap:"wrap"},
-    pinDisp:{color:"rgba(255,255,255,0.2)",fontSize:SIZE.font.xs,fontFamily:"'DM Mono',monospace"},
+    pinDisp:{color:"rgba(255,255,255,0.2)",fontSize:SIZE.font.xs,fontFamily:"'Outfit',sans-serif"},
     editRow:{display:"flex",gap:SIZE.gap.sm,width:"100%",alignItems:"center",flexWrap:"wrap"},
     confirmInline:{display:"flex",gap:s(6),alignItems:"center"},
-    emptyText:{color:"rgba(255,255,255,0.45)",fontSize:SIZE.font.md,padding:`${s(32)}px ${s(20)}px`,textAlign:"center",lineHeight:1.5,fontFamily:"'Instrument Sans',sans-serif"},
-    emptyHint:{color:"rgba(255,255,255,0.3)",fontSize:SIZE.font.sm,marginTop:s(6),fontFamily:"'Instrument Sans',sans-serif",lineHeight:1.5},
+    emptyText:{color:"rgba(255,255,255,0.45)",fontSize:SIZE.font.md,padding:`${s(32)}px ${s(20)}px`,textAlign:"center",lineHeight:1.5,fontFamily:"'Outfit',sans-serif"},
+    emptyHint:{color:"rgba(255,255,255,0.3)",fontSize:SIZE.font.sm,marginTop:s(6),fontFamily:"'Outfit',sans-serif",lineHeight:1.5},
     // Green-accented row for "currently on the clock" employees — left border + faint bg tint reads as "active".
-    activeRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:`${s(12)}px ${s(12)}px`,marginBottom:s(4),borderRadius:SIZE.radius.sm,background:"rgba(74,170,153,0.06)",borderLeft:"3px solid #4a9",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,gap:s(6)},
+    activeRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:`${s(12)}px ${s(12)}px`,marginBottom:s(4),borderRadius:SIZE.radius.sm,background:"rgba(74,170,153,0.06)",borderLeft:"3px solid #4a9",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,gap:s(6)},
     // Correction request card — distinct container for each pending correction in the Actions tab.
     correctionCard:{padding:`${s(14)}px ${s(14)}px`,marginBottom:s(10),background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:SIZE.radius.md},
     correctionQuote:{fontSize:fontMin(12),color:"rgba(255,255,255,0.55)",marginTop:s(8),padding:`${s(8)}px ${s(12)}px`,background:"rgba(255,255,255,0.03)",borderLeft:"2px solid rgba(255,255,255,0.2)",borderRadius:s(4),fontStyle:"italic",lineHeight:1.5},
     // Subtle bordered button used for Prev/Current pay-period nav.
-    pillBtn:{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.12)",borderRadius:s(20),color:"rgba(255,255,255,0.7)",fontFamily:"'Instrument Sans',sans-serif",fontSize:fontMin(11),fontWeight:500,cursor:"pointer",padding:`${s(8)}px ${s(14)}px`,minHeight:touchMin(36),outline:"none",letterSpacing:"0.05em",textTransform:"uppercase",touchAction:"manipulation"},
+    pillBtn:{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.12)",borderRadius:s(20),color:"rgba(255,255,255,0.7)",fontFamily:"'Outfit',sans-serif",fontSize:fontMin(11),fontWeight:500,cursor:"pointer",padding:`${s(8)}px ${s(14)}px`,minHeight:touchMin(36),outline:"none",letterSpacing:"0.05em",textTransform:"uppercase",touchAction:"manipulation"},
     pillBtnActive:{background:"rgba(74,170,153,0.15)",borderColor:"rgba(74,170,153,0.4)",color:"#4a9"},
     // Exception list row — colored left border indicates type at a glance.
-    excRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:`${s(10)}px ${s(12)}px`,marginBottom:s(4),borderRadius:s(4),background:"rgba(255,255,255,0.02)",fontFamily:"'Instrument Sans',sans-serif",fontSize:fontMin(12),gap:s(6)},
+    excRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:`${s(10)}px ${s(12)}px`,marginBottom:s(4),borderRadius:s(4),background:"rgba(255,255,255,0.02)",fontFamily:"'Outfit',sans-serif",fontSize:fontMin(12),gap:s(6)},
     inactiveTag:{fontSize:SIZE.font.xs,marginLeft:s(8),color:"rgba(255,255,255,0.2)"},
-    removeBtn:{background:"none",border:"none",color:"rgba(255,255,255,0.45)",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.xs,cursor:"pointer",outline:"none",padding:`${s(8)}px ${s(10)}px`,minHeight:touchMin(36),touchAction:"manipulation"},
-    logRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:`${s(10)}px 0`,borderBottom:"1px solid rgba(255,255,255,0.04)",fontFamily:"'Instrument Sans',sans-serif",fontSize:fontMin(13),gap:s(6)},
-    logTime:{color:"rgba(255,255,255,0.3)",fontSize:SIZE.font.xs,fontFamily:"'DM Mono',monospace"},
-    hoursDisp:{color:"rgba(255,255,255,0.5)",fontSize:SIZE.font.xs,fontFamily:"'DM Mono',monospace"},
+    removeBtn:{background:"none",border:"none",color:"rgba(255,255,255,0.45)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.xs,cursor:"pointer",outline:"none",padding:`${s(8)}px ${s(10)}px`,minHeight:touchMin(36),touchAction:"manipulation"},
+    logRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:`${s(10)}px 0`,borderBottom:"1px solid rgba(255,255,255,0.04)",fontFamily:"'Outfit',sans-serif",fontSize:fontMin(13),gap:s(6)},
+    logTime:{color:"rgba(255,255,255,0.4)",fontSize:SIZE.font.xs,fontFamily:"'Outfit',sans-serif",fontWeight:500},
+    hoursDisp:{color:"rgba(255,255,255,0.6)",fontSize:SIZE.font.xs,fontFamily:"'Outfit',sans-serif",fontWeight:500},
     revealCard:{width:"100%",padding:`${s(20)}px ${s(18)}px`,background:"rgba(74,170,153,0.06)",border:"1px solid rgba(74,170,153,0.25)",borderRadius:SIZE.radius.md,display:"flex",flexDirection:"column",alignItems:"center",gap:SIZE.gap.md,marginBottom:SIZE.gap.lg},
-    revealLabel:{fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm,fontWeight:500,color:"rgba(255,255,255,0.6)",letterSpacing:"0.15em",textTransform:"uppercase",textAlign:"center"},
+    revealLabel:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,fontWeight:500,color:"rgba(255,255,255,0.6)",letterSpacing:"0.15em",textTransform:"uppercase",textAlign:"center"},
     revealHelp:{fontSize:SIZE.font.sm,color:"rgba(255,255,255,0.45)",textAlign:"center",maxWidth:s(340),lineHeight:1.5},
     qrFrame:{background:"#ffffff",borderRadius:SIZE.radius.md,padding:s(8),display:"flex",alignItems:"center",justifyContent:"center"},
-    revealPin:{fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.xl,letterSpacing:"0.2em",color:"#4a9",fontWeight:400},
-    revealCountdown:{fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.xs,color:"rgba(255,255,255,0.35)",letterSpacing:"0.1em",textTransform:"uppercase"},
+    revealPin:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.xl,letterSpacing:"0.2em",color:"#4a9",fontWeight:600},
+    revealCountdown:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.xs,color:"rgba(255,255,255,0.35)",letterSpacing:"0.1em",textTransform:"uppercase"},
     exportRow:{display:"flex",gap:SIZE.gap.sm,alignItems:"center",marginBottom:SIZE.gap.sm},
     // Dense data tables — excluded from scaling per spec (pay period, exceptions)
-    th:{padding:"6px 4px",fontSize:fontMin(10),color:"rgba(255,255,255,0.3)",fontWeight:400,borderBottom:"1px solid rgba(255,255,255,0.06)",textAlign:"center",fontFamily:"'DM Mono',monospace",position:"sticky",top:0,background:"#0b0b0b"},
-    td:{padding:"6px 4px",fontSize:fontMin(11),color:"rgba(255,255,255,0.4)",textAlign:"center",borderBottom:"1px solid rgba(255,255,255,0.03)",fontFamily:"'DM Mono',monospace"},
+    th:{padding:"6px 4px",fontSize:fontMin(10),color:"rgba(255,255,255,0.3)",fontWeight:400,borderBottom:"1px solid rgba(255,255,255,0.06)",textAlign:"center",fontFamily:"'Outfit',sans-serif",position:"sticky",top:0,background:"#0b0b0b"},
+    td:{padding:"6px 4px",fontSize:fontMin(11),color:"rgba(255,255,255,0.4)",textAlign:"center",borderBottom:"1px solid rgba(255,255,255,0.03)",fontFamily:"'Outfit',sans-serif"},
   }), [scale]);
 
   if(typeof crypto==="undefined"||!crypto.subtle){
@@ -1266,7 +1267,7 @@ export default function ClockInKiosk() {
           <div style={S.qrFrame}>
             {reveal.qrDataUrl
               ? <img src={reveal.qrDataUrl} alt={`QR code for ${reveal.name}'s setup PIN`} style={{display:"block",width:Math.max(140,s(180)),height:Math.max(140,s(180))}}/>
-              : <div style={{width:Math.max(140,s(180)),height:Math.max(140,s(180)),display:"flex",alignItems:"center",justifyContent:"center",color:"#0b0b0b",fontFamily:"'Instrument Sans',sans-serif",fontSize:SIZE.font.sm}}>Generating…</div>}
+              : <div style={{width:Math.max(140,s(180)),height:Math.max(140,s(180)),display:"flex",alignItems:"center",justifyContent:"center",color:"#0b0b0b",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm}}>Generating…</div>}
           </div>
           <div style={S.revealPin}>{reveal.pin}</div>
           <div style={S.revealHelp}>Scan with your phone or write this down.</div>
@@ -1317,7 +1318,15 @@ export default function ClockInKiosk() {
                 const dis=key===null||isLockedOut||verifying;
                 return <button key={i} style={{...S.numKey,...(key===null?S.numKeyEmpty:{}),...(key==="del"?S.numKeyMeta:{}),...(pressedKey===i&&!dis?S.numKeyPressed:{}),...((isLockedOut||verifying)&&key!==null?{opacity:0.3}:{})}}
                   onPointerDown={()=>!dis&&setPressedKey(i)} onPointerUp={()=>setPressedKey(null)} onPointerLeave={()=>setPressedKey(null)}
-                  onClick={()=>{if(dis)return;if(key==="del")setPin(p=>p.slice(0,-1));else handlePinDigit(String(key));}} disabled={dis}>{key==="del"?"⌫":key}</button>;
+                  onClick={()=>{if(dis)return;if(key==="del")setPin(p=>p.slice(0,-1));else handlePinDigit(String(key));}} disabled={dis}>{key==="del"?(
+                    // SVG backspace icon (left-pointing pentagon with X inside) — renders identically across
+                    // platforms regardless of font support, stroke matches the regular-weight numerals.
+                    <svg width={s(28)} height={s(28)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Delete previous digit">
+                      <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
+                      <line x1="18" y1="9" x2="12" y2="15"/>
+                      <line x1="12" y1="9" x2="18" y2="15"/>
+                    </svg>
+                  ):key}</button>;
               })}
             </div>
             {view===VIEWS.ADMIN_LOGIN&&<div style={S.footerLinks}><button style={S.linkBtn} onClick={()=>{setView(VIEWS.PIN);setPin("");setMessage(null);}}>Back</button></div>}
@@ -1355,7 +1364,15 @@ export default function ClockInKiosk() {
                     const dis=key===null||verifying;
                     return <button key={i} style={{...S.numKey,...(key===null?S.numKeyEmpty:{}),...(key==="del"?S.numKeyMeta:{}),...(pressedKey===i&&!dis?S.numKeyPressed:{}),...(verifying&&key!==null?{opacity:0.3}:{})}}
                       onPointerDown={()=>!dis&&setPressedKey(i)} onPointerUp={()=>setPressedKey(null)} onPointerLeave={()=>setPressedKey(null)}
-                      onClick={()=>{if(dis)return;if(key==="del")setPin(p=>p.slice(0,-1));else handlePinDigit(String(key));}} disabled={dis}>{key==="del"?"⌫":key}</button>;
+                      onClick={()=>{if(dis)return;if(key==="del")setPin(p=>p.slice(0,-1));else handlePinDigit(String(key));}} disabled={dis}>{key==="del"?(
+                    // SVG backspace icon (left-pointing pentagon with X inside) — renders identically across
+                    // platforms regardless of font support, stroke matches the regular-weight numerals.
+                    <svg width={s(28)} height={s(28)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Delete previous digit">
+                      <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
+                      <line x1="18" y1="9" x2="12" y2="15"/>
+                      <line x1="12" y1="9" x2="18" y2="15"/>
+                    </svg>
+                  ):key}</button>;
                   })}
                 </div>
               </>
@@ -1440,14 +1457,14 @@ export default function ClockInKiosk() {
               <div style={{width:"100%",marginTop:s(24),paddingTop:s(20),borderTop:"1px solid rgba(255,255,255,0.08)"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:`${s(4)}px 0 ${s(12)}px`,fontSize:fontMin(13),color:"rgba(255,255,255,0.55)",letterSpacing:"0.08em",textTransform:"uppercase",fontWeight:600}}>
                   <span>Pay Period</span>
-                  <span style={{fontFamily:"'DM Mono',monospace",color:"rgba(255,255,255,0.85)",fontSize:fontMin(14),letterSpacing:"0.02em",textTransform:"none",fontWeight:400}}>{empPeriodHours.hrs}h {empPeriodHours.mins}m{empPeriodHours.openShift?<span style={{color:"#4a9",marginLeft:s(6)}}>● active</span>:""}</span>
+                  <span style={{fontFamily:"'Outfit',sans-serif",color:"rgba(255,255,255,0.85)",fontSize:fontMin(14),letterSpacing:"0.02em",textTransform:"none",fontWeight:400}}>{empPeriodHours.hrs}h {empPeriodHours.mins}m{empPeriodHours.openShift?<span style={{color:"#4a9",marginLeft:s(6)}}>● active</span>:""}</span>
                 </div>
                 <div style={{maxHeight:s(200),overflowY:"auto"}}>
                   {empPeriodEntries.map(e=>(
                     <div key={e.id} style={{...S.logRow,fontSize:fontMin(12)}}>
                       <span style={{color:"rgba(255,255,255,0.3)",width:s(50)}}>{fmtDate(e.timestamp)}</span>
                       <span style={{color:e.type==="in"?"#4a9":"#e05555",fontWeight:500,width:s(28)}}>{e.type==="in"?"IN":"OUT"}</span>
-                      <span style={{color:"rgba(255,255,255,0.4)",flex:1,fontFamily:"'DM Mono',monospace"}}>{fmtTs(e.timestamp)}</span>
+                      <span style={{color:"rgba(255,255,255,0.4)",flex:1,fontFamily:"'Outfit',sans-serif"}}>{fmtTs(e.timestamp)}</span>
                       {e.reason&&<span style={{color:"rgba(255,255,255,0.2)",fontSize:fontMin(10)}}>{e.reason}</span>}
                       {e.manual&&<span style={S.manualBadge}>M</span>}
                       <button style={{...S.removeBtn,fontSize:fontMin(10),padding:`${s(2)}px ${s(6)}px`,minHeight:touchMin(32)}} onClick={()=>{setFlaggingEntry(e);setFlagNote("");}}>Flag</button>
@@ -1550,7 +1567,7 @@ export default function ClockInKiosk() {
                               {emp.needsPinChange&&<span style={{fontSize:SIZE.font.xs,color:"#e09955",letterSpacing:"0.05em"}}>needs setup</span>}
                             </span>
                             {(emp.email||emp.phone)&&(
-                              <span style={{fontSize:SIZE.font.xs,color:"rgba(255,255,255,0.35)",fontFamily:"'Instrument Sans',sans-serif"}}>
+                              <span style={{fontSize:SIZE.font.xs,color:"rgba(255,255,255,0.35)",fontFamily:"'Outfit',sans-serif"}}>
                                 {[emp.email,emp.phone].filter(Boolean).join(" · ")}
                               </span>
                             )}
@@ -1630,7 +1647,7 @@ export default function ClockInKiosk() {
                             <span style={{width:s(10),height:s(10),borderRadius:"50%",background:"#4a9",boxShadow:"0 0 10px rgba(74,170,153,0.5)"}}/>
                             <span style={{color:"rgba(255,255,255,0.92)",fontSize:SIZE.font.md,fontWeight:500}}>{emp.name}</span>
                           </span>
-                          <span style={{color:"#4a9",fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.sm,fontWeight:500}}>{hrs}h {mins}m</span>
+                          <span style={{color:"#4a9",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,fontWeight:500}}>{hrs}h {mins}m</span>
                         </div>
                       ))}
                     </div>
@@ -1644,7 +1661,7 @@ export default function ClockInKiosk() {
                       {expectedToday.map(({emp,sched,status,delta})=>(
                         <div key={emp.id} style={S.logRow}>
                           <span style={{color:"rgba(255,255,255,0.7)",flex:1}}>{emp.name}</span>
-                          <span style={{color:"rgba(255,255,255,0.35)",fontSize:fontMin(12),fontFamily:"'DM Mono',monospace"}}>{sched.start}–{sched.end}</span>
+                          <span style={{color:"rgba(255,255,255,0.35)",fontSize:fontMin(12),fontFamily:"'Outfit',sans-serif"}}>{sched.start}–{sched.end}</span>
                           {status==="no_show"&&<span style={S.badgeRed}>No-show</span>}
                           {status==="late"&&<span style={S.badgeOrange}>Late +{delta}m</span>}
                           {status==="missing"&&<span style={{...S.badgeOrange,background:"rgba(255,165,0,0.08)"}}>Waiting</span>}
@@ -1700,7 +1717,7 @@ export default function ClockInKiosk() {
                       return (
                         <div key={empId} style={{...S.logRow,padding:`${s(12)}px 0`}}>
                           <span style={{color:"rgba(255,255,255,0.75)",flex:1}}>{emp?.name||"?"}</span>
-                          <span style={{color:"rgba(255,255,255,0.7)",fontFamily:"'DM Mono',monospace",fontSize:SIZE.font.sm}}>{info.hrs}h {info.mins}m{info.openShift&&<span style={{color:"#4a9",marginLeft:s(6),fontSize:fontMin(10)}}>● active</span>}</span>
+                          <span style={{color:"rgba(255,255,255,0.7)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm}}>{info.hrs}h {info.mins}m{info.openShift&&<span style={{color:"#4a9",marginLeft:s(6),fontSize:fontMin(10)}}>● active</span>}</span>
                           {isOT&&<span style={{...S.badgeOrange,fontSize:fontMin(11),padding:`${s(4)}px ${s(10)}px`,fontWeight:600,letterSpacing:"0.1em"}}>OT</span>}
                         </div>
                       );
@@ -1740,7 +1757,7 @@ export default function ClockInKiosk() {
                     return (
                       <div key={c.id} style={S.correctionCard}>
                         <div style={{fontSize:SIZE.font.md,color:"rgba(255,255,255,0.9)",fontWeight:600,marginBottom:s(4)}}>{emp?.name}</div>
-                        <div style={{fontSize:fontMin(13),color:"rgba(255,255,255,0.55)",fontFamily:"'DM Mono',monospace"}}>
+                        <div style={{fontSize:fontMin(13),color:"rgba(255,255,255,0.55)",fontFamily:"'Outfit',sans-serif"}}>
                           <span style={{color:entry?.type==="in"?"#4a9":"#e05555",fontWeight:500}}>{entry?.type?.toUpperCase()}</span>
                           {" "}at {entry?fmtTs(entry.timestamp):"-"} · {entry?fmtDate(entry.timestamp):""}
                         </div>
@@ -1791,12 +1808,12 @@ export default function ClockInKiosk() {
                   <div style={{...S.sectionLabel,marginBottom:0}}>Pay Period</div>
                   <div style={{display:"flex",gap:s(8),alignItems:"center"}}>
                     <button style={{...S.pillBtn,...(payPeriodOffset===-1?S.pillBtnActive:{})}} onClick={()=>setPayPeriodOffset(-1)}>Prev</button>
-                    <span style={{fontSize:fontMin(12),color:"rgba(255,255,255,0.55)",fontFamily:"'DM Mono',monospace",padding:`0 ${s(4)}px`}}>{payPeriod.label}</span>
+                    <span style={{fontSize:fontMin(12),color:"rgba(255,255,255,0.55)",fontFamily:"'Outfit',sans-serif",padding:`0 ${s(4)}px`}}>{payPeriod.label}</span>
                     <button style={{...S.pillBtn,...(payPeriodOffset===0?S.pillBtnActive:{})}} onClick={()=>setPayPeriodOffset(0)}>Current</button>
                   </div>
                 </div>
                 <div style={{overflowX:"auto",width:"100%"}}>
-                  <table style={{borderCollapse:"collapse",width:"100%",fontSize:fontMin(11),fontFamily:"'DM Mono',monospace"}}>
+                  <table style={{borderCollapse:"collapse",width:"100%",fontSize:fontMin(11),fontFamily:"'Outfit',sans-serif"}}>
                     <thead>
                       <tr>
                         <th style={S.th}>Name</th>
@@ -1813,7 +1830,7 @@ export default function ClockInKiosk() {
                         const rowBg=rowIdx%2===1?"rgba(255,255,255,0.02)":"transparent";
                         return (
                           <tr key={emp.id} style={{background:rowBg}}>
-                            <td style={{...S.td,color:"rgba(255,255,255,0.7)",textAlign:"left",fontFamily:"'Instrument Sans',sans-serif"}}>{emp.name}</td>
+                            <td style={{...S.td,color:"rgba(255,255,255,0.7)",textAlign:"left",fontFamily:"'Outfit',sans-serif"}}>{emp.name}</td>
                             {payDays.map(d=>{
                               const cell=data.days[d];
                               if(!cell) return <td key={d} style={S.td}>—</td>;
@@ -1860,7 +1877,7 @@ export default function ClockInKiosk() {
                         <div key={i} style={{...S.excRow,borderLeft:`3px solid ${accent}`}}>
                           <span style={{color:"rgba(255,255,255,0.75)",flex:1,fontSize:SIZE.font.sm,fontWeight:500}}>{exc.emp?.name}</span>
                           <span style={{fontSize:fontMin(11),color:accent,fontWeight:500}}>{exc.desc}</span>
-                          <span style={{fontSize:fontMin(10),color:"rgba(255,255,255,0.3)",fontFamily:"'DM Mono',monospace"}}>{fmtDate(exc.entry.timestamp)} {fmtTs(exc.entry.timestamp)}</span>
+                          <span style={{fontSize:fontMin(10),color:"rgba(255,255,255,0.3)",fontFamily:"'Outfit',sans-serif"}}>{fmtDate(exc.entry.timestamp)} {fmtTs(exc.entry.timestamp)}</span>
                         </div>
                       );
                     })}
@@ -1922,7 +1939,7 @@ export default function ClockInKiosk() {
                         <div key={a.id} style={{...S.logRow,fontSize:fontMin(11)}}>
                           <span style={{color:"rgba(255,255,255,0.5)",flex:1}}>{a.action}</span>
                           <span style={{color:"rgba(255,255,255,0.3)",flex:1}}>{a.detail}</span>
-                          <span style={{color:"rgba(255,255,255,0.2)",fontFamily:"'DM Mono',monospace",fontSize:fontMin(10)}}>{fmtTs(a.timestamp)}<br/>{fmtDate(a.timestamp)}</span>
+                          <span style={{color:"rgba(255,255,255,0.2)",fontFamily:"'Outfit',sans-serif",fontSize:fontMin(10)}}>{fmtTs(a.timestamp)}<br/>{fmtDate(a.timestamp)}</span>
                         </div>
                       ))
                     }
@@ -1943,7 +1960,7 @@ export default function ClockInKiosk() {
                 )}
 
                 {/* Storage usage */}
-                <div style={{marginTop:s(24),padding:`${s(10)}px 0`,borderTop:"1px solid rgba(255,255,255,0.06)",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:fontMin(11),color:"rgba(255,255,255,0.4)",fontFamily:"'DM Mono',monospace"}}>
+                <div style={{marginTop:s(24),padding:`${s(10)}px 0`,borderTop:"1px solid rgba(255,255,255,0.06)",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:fontMin(11),color:"rgba(255,255,255,0.4)",fontFamily:"'Outfit',sans-serif"}}>
                   <span style={{letterSpacing:"0.1em",textTransform:"uppercase"}}>Storage</span>
                   <span style={{color:storageBytes>4*1024*1024?"#e09955":"rgba(255,255,255,0.4)"}}>~{storageBytes<1024*1024?`${Math.max(1,Math.round(storageBytes/1024))} KB`:`${(storageBytes/1024/1024).toFixed(1)} MB`} / 5 MB</span>
                 </div>
@@ -1984,7 +2001,7 @@ export default function ClockInKiosk() {
               setShowAudit(false); setShowBackup(false); setRestorePreview(null); setApprovingCorr(null);
               setTempPinReveal(null); setResettingPinId(null); setFactoryResetStage(null);
             }}>Exit Admin</button>
-            <div style={{marginTop:s(14),fontSize:fontMin(10),color:"rgba(255,255,255,0.1)",fontFamily:"'DM Mono',monospace",textAlign:"center"}}>
+            <div style={{marginTop:s(14),fontSize:fontMin(10),color:"rgba(255,255,255,0.1)",fontFamily:"'Outfit',sans-serif",textAlign:"center"}}>
               v{__APP_VERSION__} · Built {new Date(__BUILD_DATE__).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
             </div>
           </div>
