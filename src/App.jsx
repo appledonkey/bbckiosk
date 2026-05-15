@@ -1117,7 +1117,7 @@ export default function ClockInKiosk() {
   // Styles object — memoized to skip rebuilds when scale doesn't change.
   // Closes over s/touchMin/fontMin/SIZE from this render via the factory.
   const S = useMemo(() => ({
-    container:{position:"relative",width:"100%",height:"100vh",minHeight:s(600),background:"#0b0b0b",display:"flex",alignItems:"center",justifyContent:"center",overflow:"auto",userSelect:"none",fontVariantNumeric:"tabular-nums"},
+    container:{position:"relative",width:"100%",height:"100vh",minHeight:s(600),background:"#0b0b0b",display:"flex",alignItems:"center",justifyContent:"center",overflow:"auto",userSelect:"none",fontFamily:"'Outfit',sans-serif",fontVariantNumeric:"tabular-nums",color:"rgba(255,255,255,0.85)"},
     grain:{position:"fixed",inset:0,opacity:0.025,backgroundImage:`url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,backgroundSize:"128px 128px",pointerEvents:"none"},
     inner:{display:"flex",flexDirection:"column",alignItems:"center",gap:SIZE.gap.xxl,padding:`${s(40)}px ${s(20)}px`,width:"100%",maxWidth:s(480),zIndex:1,transition:"transform 2s ease"},
     clockHeader:{textAlign:"center",cursor:"default",touchAction:"manipulation"},
