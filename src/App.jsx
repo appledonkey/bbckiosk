@@ -1175,7 +1175,7 @@ export default function ClockInKiosk() {
     // Full-width note input — used on action screen + flag flow + manual entry.
     noteInput:{width:"100%",boxSizing:"border-box",padding:`0 ${s(16)}px`,minHeight:touchMin(52),borderRadius:SIZE.radius.sm,border:"1px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.9)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.md,outline:"none"},
     // Smaller-cap admin section label — replaces inline {...panelLabel, fontSize:11, marginBottom:8} pattern.
-    sectionLabel:{fontFamily:"'Outfit',sans-serif",fontSize:fontMin(11),fontWeight:600,color:"rgba(255,255,255,0.5)",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:s(12),display:"flex",alignItems:"center",gap:s(8)},
+    sectionLabel:{fontFamily:"'Outfit',sans-serif",fontSize:fontMin(12),fontWeight:600,color:"rgba(255,255,255,0.5)",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:s(12),display:"flex",alignItems:"center",gap:s(8)},
     adminForm:{display:"flex",gap:SIZE.gap.sm,width:"100%",marginBottom:SIZE.gap.lg,flexWrap:"wrap"},
     adminInput:{flex:1,padding:`0 ${s(14)}px`,minHeight:SIZE.touch.min,borderRadius:SIZE.radius.sm,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.85)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,outline:"none"},
     dateInput:{flex:1,padding:`0 ${s(10)}px`,minHeight:SIZE.touch.min,borderRadius:SIZE.radius.sm,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.85)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,outline:"none",colorScheme:"dark"},
@@ -1572,7 +1572,7 @@ export default function ClockInKiosk() {
                               </span>
                             )}
                           </div>
-                          <div style={{display:"flex",gap:s(4),flexWrap:"wrap"}}>
+                          <div style={{display:"flex",gap:s(8),flexWrap:"wrap"}}>
                             <button style={S.removeBtn} onClick={()=>{setEditingId(emp.id);setEditName(emp.name);setEditEmail(emp.email||"");setEditPhone(emp.phone||"");}}>Edit</button>
                             {resettingPinId===emp.id?(
                               <div style={S.confirmInline}>
