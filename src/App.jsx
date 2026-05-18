@@ -1600,7 +1600,7 @@ export default function ClockInKiosk() {
         <div style={view===VIEWS.ADMIN?S.timeDisplaySm:S.timeDisplay}>{h}:{m}<span style={view===VIEWS.ADMIN?S.secsSm:S.secs}>{sec}</span><span style={view===VIEWS.ADMIN?S.perSm:S.per}>{p}</span></div>
         <div style={view===VIEWS.ADMIN?S.dateDisplaySm:S.dateDisplay}>{dateStr}</div>
       </div>
-      <div style={{...S.inner,transform:`translate(${burnOffset.x}px,${burnOffset.y}px)`}}>
+      <div style={{...S.inner,transform:`translate(${burnOffset.x}px,${burnOffset.y}px)`,...((view===VIEWS.ADMIN||view===VIEWS.SETUP)?{margin:0}:{})}}>
         {/* PIN Entry (includes employee login, admin login, and PIN setup flow) */}
         {(view===VIEWS.PIN||view===VIEWS.ADMIN_LOGIN||view===VIEWS.PIN_SETUP)&&(
           <div style={panelStyle}>
@@ -1948,8 +1948,11 @@ export default function ClockInKiosk() {
             )}
             {message&&<div style={{...S.toast,color:message.type==="error"?"#e05555":"#4a9",marginBottom:s(12)}}>{message.text}</div>}
 
-            {/* Tab bar */}
-            <div style={S.tabBar}>
+            {/* Tab bar — sticky just below the (also sticky) clock so it stays visible while
+                scrolling long admin tabs (Reports, Settings/Audit Log). The top offset matches
+                the rendered clock height in admin mode: paddingTop s(8) + timeDisplaySm s(36)
+                + dateDisplaySm marginTop s(4) + dateDisplaySm fontMin(12) + paddingBottom s(8). */}
+            <div style={{...S.tabBar,position:"sticky",top:s(72),zIndex:1,background:"#0b0b0b",paddingTop:s(8)}}>
               {ADMIN_TABS.map(t=>(
                 <button key={t.id} style={{...S.tab,...(adminTab===t.id?S.tabActive:{})}} onClick={()=>setAdminTab(t.id)}>
                   {t.label}{t.id==="actions"&&pendingCorrs.length>0?<span style={S.badge}>{pendingCorrs.length}</span>:""}
