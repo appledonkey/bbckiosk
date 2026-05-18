@@ -1429,22 +1429,22 @@ export default function ClockInKiosk() {
     secsSm:{fontSize:s(16),color:"rgba(255,255,255,0.25)",marginLeft:s(3)},
     perSm:{fontSize:fontMin(12),color:"rgba(255,255,255,0.2)",marginLeft:s(4),letterSpacing:"0.1em"},
     dateDisplaySm:{fontFamily:"'Outfit',sans-serif",fontSize:fontMin(12),color:"rgba(255,255,255,0.2)",marginTop:s(4),letterSpacing:"0.02em"},
-    secs:{fontSize:s(56),color:"rgba(255,255,255,0.25)",marginLeft:s(4)},
-    per:{fontSize:SIZE.font.md,color:"rgba(255,255,255,0.2)",marginLeft:s(6),letterSpacing:"0.1em"},
-    dateDisplay:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,color:"rgba(255,255,255,0.25)",marginTop:s(8),letterSpacing:"0.02em"},
+    secs:{fontSize:s(56),color:"rgba(255,255,255,0.4)",marginLeft:s(4)},
+    per:{fontSize:SIZE.font.md,color:"rgba(255,255,255,0.35)",marginLeft:s(6),letterSpacing:"0.1em"},
+    dateDisplay:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,color:"rgba(255,255,255,0.4)",marginTop:s(8),letterSpacing:"0.02em"},
     panel:{width:"100%",display:"flex",flexDirection:"column",alignItems:"center"},
     panelLabel:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.md,fontWeight:500,color:"rgba(255,255,255,0.35)",letterSpacing:"0.25em",textTransform:"uppercase",marginBottom:SIZE.gap.xl},
     pinDots:{display:"flex",gap:s(18),marginBottom:SIZE.gap.xl},
     dot:{width:s(18),height:s(18),borderRadius:"50%",border:"1px solid rgba(255,255,255,0.22)",background:"rgba(255,255,255,0.04)",transition:"all 0.15s ease"},
     numpad:{display:"grid",gridTemplateColumns:`repeat(3,${touchMin(100)}px)`,gap:s(12),justifyContent:"center"},
-    numKey:{width:touchMin(100),height:touchMin(100),border:"1px solid rgba(255,255,255,0.08)",borderRadius:SIZE.radius.md,background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.85)",fontSize:s(36),fontFamily:"'Outfit',sans-serif",fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.1s ease",outline:"none",touchAction:"manipulation"},
+    numKey:{width:touchMin(100),height:touchMin(100),border:"1px solid rgba(255,255,255,0.08)",borderRadius:s(20),background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.85)",fontSize:s(36),fontFamily:"'Outfit',sans-serif",fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.1s ease",outline:"none",touchAction:"manipulation"},
     numKeyPressed:{transform:"scale(0.93)",background:"rgba(255,255,255,0.1)"},
     numKeyEmpty:{border:"none",background:"transparent",cursor:"default"},
     numKeyMeta:{fontSize:SIZE.font.lg,color:"rgba(255,255,255,0.3)",border:"1px solid rgba(255,255,255,0.05)"},
     toast:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,fontWeight:500,marginBottom:SIZE.gap.lg,letterSpacing:"0.02em",textAlign:"center",maxWidth:s(340)},
     lockout:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.md,color:"#e05555",marginBottom:SIZE.gap.lg,padding:`${s(10)}px ${s(22)}px`,border:"1px solid rgba(224,85,85,0.2)",borderRadius:SIZE.radius.sm,background:"rgba(224,85,85,0.05)"},
     footerLinks:{marginTop:SIZE.gap.xl},
-    linkBtn:{background:"none",border:"none",color:"rgba(255,255,255,0.35)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,cursor:"pointer",letterSpacing:"0.1em",textTransform:"uppercase",padding:`${s(14)}px ${s(20)}px`,minHeight:SIZE.touch.min,outline:"none",touchAction:"manipulation"},
+    linkBtn:{background:"none",border:"none",color:"rgba(255,255,255,0.5)",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,cursor:"pointer",letterSpacing:"0.1em",textTransform:"uppercase",padding:`${s(14)}px ${s(20)}px`,minHeight:SIZE.touch.min,outline:"none",touchAction:"manipulation"},
     empName:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.xxl,fontWeight:600,color:"rgba(255,255,255,0.92)",marginBottom:s(12),textAlign:"center",lineHeight:1.1},
     statusBadge:{display:"flex",alignItems:"center",gap:s(10),fontFamily:"'Outfit',sans-serif",fontSize:s(17),fontWeight:500,color:"rgba(255,255,255,0.6)",marginBottom:s(28),letterSpacing:"0.04em"},
     statusDot:{width:s(12),height:s(12),borderRadius:"50%"},
@@ -1487,8 +1487,8 @@ export default function ClockInKiosk() {
     pinDisp:{color:"rgba(255,255,255,0.2)",fontSize:SIZE.font.xs,fontFamily:"'Outfit',sans-serif"},
     editRow:{display:"flex",gap:SIZE.gap.sm,width:"100%",alignItems:"center",flexWrap:"wrap"},
     confirmInline:{display:"flex",gap:s(6),alignItems:"center"},
-    emptyText:{color:"rgba(255,255,255,0.45)",fontSize:SIZE.font.md,padding:`${s(32)}px ${s(20)}px`,textAlign:"center",lineHeight:1.5,fontFamily:"'Outfit',sans-serif"},
-    emptyHint:{color:"rgba(255,255,255,0.3)",fontSize:SIZE.font.sm,marginTop:s(6),fontFamily:"'Outfit',sans-serif",lineHeight:1.5},
+    emptyText:{color:"rgba(255,255,255,0.55)",fontSize:SIZE.font.md,padding:`${s(32)}px ${s(20)}px`,textAlign:"center",lineHeight:1.5,fontFamily:"'Outfit',sans-serif"},
+    emptyHint:{color:"rgba(255,255,255,0.45)",fontSize:SIZE.font.sm,marginTop:s(6),fontFamily:"'Outfit',sans-serif",lineHeight:1.5},
     // Green-accented row for "currently on the clock" employees — left border + faint bg tint reads as "active".
     activeRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:`${s(12)}px ${s(12)}px`,marginBottom:s(4),borderRadius:SIZE.radius.sm,background:"rgba(74,170,153,0.06)",borderLeft:"3px solid #4a9",fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,gap:s(6)},
     // Correction request card — distinct container for each pending correction in the Actions tab.
@@ -1628,12 +1628,11 @@ export default function ClockInKiosk() {
                 return <button key={i} style={{...S.numKey,...(key===null?S.numKeyEmpty:{}),...(key==="del"?S.numKeyMeta:{}),...(pressedKey===i&&!dis?S.numKeyPressed:{}),...((isLockedOut||verifying)&&key!==null?{opacity:0.3}:{})}}
                   onPointerDown={()=>{if(dis)return;navigator.vibrate?.(10);setPressedKey(i);}} onPointerUp={()=>setPressedKey(null)} onPointerLeave={()=>setPressedKey(null)}
                   onClick={()=>{if(dis)return;if(key==="del")setPin(p=>p.slice(0,-1));else handlePinDigit(String(key));}} disabled={dis}>{key==="del"?(
-                    // SVG backspace icon (left-pointing pentagon with X inside) — renders identically across
+                    // SVG back-arrow backspace icon — two-stroke left arrow. Renders identically across
                     // platforms regardless of font support, stroke matches the regular-weight numerals.
                     <svg width={s(28)} height={s(28)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Delete previous digit">
-                      <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
-                      <line x1="18" y1="9" x2="12" y2="15"/>
-                      <line x1="12" y1="9" x2="18" y2="15"/>
+                      <path d="m12 19-7-7 7-7"/>
+                      <path d="M19 12H5"/>
                     </svg>
                   ):key}</button>;
               })}
@@ -1716,9 +1715,8 @@ export default function ClockInKiosk() {
                       onPointerDown={()=>{if(dis)return;navigator.vibrate?.(10);setPressedKey(i);}} onPointerUp={()=>setPressedKey(null)} onPointerLeave={()=>setPressedKey(null)}
                       onClick={()=>{if(dis)return;if(key==="del")setPin(p=>p.slice(0,-1));else handlePinDigit(String(key));}} disabled={dis}>{key==="del"?(
                         <svg width={s(28)} height={s(28)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Delete previous digit">
-                          <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
-                          <line x1="18" y1="9" x2="12" y2="15"/>
-                          <line x1="12" y1="9" x2="18" y2="15"/>
+                          <path d="m12 19-7-7 7-7"/>
+                          <path d="M19 12H5"/>
                         </svg>
                       ):key}</button>;
                   })}
@@ -1754,12 +1752,11 @@ export default function ClockInKiosk() {
                     return <button key={i} style={{...S.numKey,...(key===null?S.numKeyEmpty:{}),...(key==="del"?S.numKeyMeta:{}),...(pressedKey===i&&!dis?S.numKeyPressed:{}),...(verifying&&key!==null?{opacity:0.3}:{})}}
                       onPointerDown={()=>{if(dis)return;navigator.vibrate?.(10);setPressedKey(i);}} onPointerUp={()=>setPressedKey(null)} onPointerLeave={()=>setPressedKey(null)}
                       onClick={()=>{if(dis)return;if(key==="del")setPin(p=>p.slice(0,-1));else handlePinDigit(String(key));}} disabled={dis}>{key==="del"?(
-                    // SVG backspace icon (left-pointing pentagon with X inside) — renders identically across
+                    // SVG back-arrow backspace icon — two-stroke left arrow. Renders identically across
                     // platforms regardless of font support, stroke matches the regular-weight numerals.
                     <svg width={s(28)} height={s(28)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Delete previous digit">
-                      <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
-                      <line x1="18" y1="9" x2="12" y2="15"/>
-                      <line x1="12" y1="9" x2="18" y2="15"/>
+                      <path d="m12 19-7-7 7-7"/>
+                      <path d="M19 12H5"/>
                     </svg>
                   ):key}</button>;
                   })}
