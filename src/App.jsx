@@ -1600,7 +1600,7 @@ export default function ClockInKiosk() {
         <div style={view===VIEWS.ADMIN?S.timeDisplaySm:S.timeDisplay}>{h}:{m}<span style={view===VIEWS.ADMIN?S.secsSm:S.secs}>{sec}</span><span style={view===VIEWS.ADMIN?S.perSm:S.per}>{p}</span></div>
         <div style={view===VIEWS.ADMIN?S.dateDisplaySm:S.dateDisplay}>{dateStr}</div>
       </div>
-      <div style={{...S.inner,transform:`translate(${burnOffset.x}px,${burnOffset.y}px)`,...((view===VIEWS.ADMIN||view===VIEWS.SETUP)?{margin:0}:{})}}>
+      <div style={{...S.inner,transform:`translate(${burnOffset.x}px,${burnOffset.y}px)`,...((view===VIEWS.ADMIN||view===VIEWS.SETUP)?{margin:"0 auto"}:{})}}>
         {/* PIN Entry (includes employee login, admin login, and PIN setup flow) */}
         {(view===VIEWS.PIN||view===VIEWS.ADMIN_LOGIN||view===VIEWS.PIN_SETUP)&&(
           <div style={panelStyle}>
