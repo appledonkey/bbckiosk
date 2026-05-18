@@ -1416,11 +1416,11 @@ export default function ClockInKiosk() {
   // Styles object — memoized to skip rebuilds when scale doesn't change.
   // Closes over s/touchMin/fontMin/SIZE from this render via the factory.
   const S = useMemo(() => ({
-    container:{position:"relative",width:"100%",height:"100vh",minHeight:s(600),background:"#0b0b0b",display:"flex",overflow:"auto",WebkitOverflowScrolling:"touch",userSelect:"none",fontFamily:"'Outfit',sans-serif",fontVariantNumeric:"tabular-nums",color:"rgba(255,255,255,0.85)"},
+    container:{position:"relative",width:"100%",height:"100vh",minHeight:s(600),background:"#0b0b0b",display:"flex",flexDirection:"column",paddingTop:s(40),overflow:"auto",WebkitOverflowScrolling:"touch",userSelect:"none",fontFamily:"'Outfit',sans-serif",fontVariantNumeric:"tabular-nums",color:"rgba(255,255,255,0.85)"},
     grain:{position:"fixed",inset:0,opacity:0.025,backgroundImage:`url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,backgroundSize:"128px 128px",pointerEvents:"none"},
     // Panel maxWidth: viewport-aware. Floors at the raw 480px design width so phone viewports
     // don't shrink the panel to a tiny card, caps via 100vw-gutter so we never overflow.
-    inner:{display:"flex",flexDirection:"column",alignItems:"center",gap:SIZE.gap.xxl,padding:`${s(40)}px ${s(20)}px`,margin:"auto",width:"100%",maxWidth:`min(${Math.max(480,s(480))}px, calc(100vw - ${s(24)}px))`,zIndex:1,transition:"transform 2s ease"},
+    inner:{display:"flex",flexDirection:"column",alignItems:"center",padding:`0 ${s(20)}px ${s(40)}px`,margin:"auto",width:"100%",maxWidth:`min(${Math.max(480,s(480))}px, calc(100vw - ${s(24)}px))`,zIndex:1,transition:"transform 2s ease"},
     clockHeader:{textAlign:"center",cursor:"default",touchAction:"manipulation"},
     // Employee-facing clock at 500 weight: visible at distance under fluorescent / window glare without going as heavy as 600.
     timeDisplay:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.display,fontWeight:500,color:"rgba(255,255,255,0.88)",letterSpacing:"-0.02em",lineHeight:1},
@@ -1589,17 +1589,18 @@ export default function ClockInKiosk() {
   return (
     <div style={S.container} onClick={()=>{ if(view!==VIEWS.PIN&&view!==VIEWS.SETUP) resetTimeout(); if(lockoutUntil>0&&lockoutUntil<=Date.now()){setMessage(null);setLockoutUntil(0);} }}>
       <div style={S.grain}/>
+      {/* Clock header — hoisted out of S.inner so its y-position stays consistent across views
+          (otherwise it teleports as panel height changes the margin:auto centering). Sticky on
+          admin so it remains visible while scrolling the audit log; in flow elsewhere. */}
+      <div style={{...S.clockHeader,transform:`translate(${burnOffset.x}px,${burnOffset.y}px)`,marginBottom:SIZE.gap.xxl,width:"100%",...(view===VIEWS.ADMIN?{position:"sticky",top:0,zIndex:2,background:"#0b0b0b",paddingTop:s(8),paddingBottom:s(8),marginBottom:s(16)}:{})}} onPointerDown={view===VIEWS.PIN?handleClockDown:undefined} onPointerUp={view===VIEWS.PIN?handleClockUp:undefined} onPointerLeave={view===VIEWS.PIN?handleClockUp:undefined}>
+        {/* v1.2.0: Business name shows subtly above the clock on employee-facing screens. Hidden in admin/setup contexts. */}
+        {businessName&&view!==VIEWS.ADMIN&&view!==VIEWS.SETUP&&(
+          <div style={{fontFamily:"'Outfit',sans-serif",fontSize:fontMin(13),color:"rgba(255,255,255,0.4)",letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:s(6),fontWeight:500}}>{businessName}</div>
+        )}
+        <div style={view===VIEWS.ADMIN?S.timeDisplaySm:S.timeDisplay}>{h}:{m}<span style={view===VIEWS.ADMIN?S.secsSm:S.secs}>{sec}</span><span style={view===VIEWS.ADMIN?S.perSm:S.per}>{p}</span></div>
+        <div style={view===VIEWS.ADMIN?S.dateDisplaySm:S.dateDisplay}>{dateStr}</div>
+      </div>
       <div style={{...S.inner,transform:`translate(${burnOffset.x}px,${burnOffset.y}px)`}}>
-        {/* Clock header — full size on employee-facing screens, compact on admin so it doesn't eat vertical space */}
-        <div style={S.clockHeader} onPointerDown={view===VIEWS.PIN?handleClockDown:undefined} onPointerUp={view===VIEWS.PIN?handleClockUp:undefined} onPointerLeave={view===VIEWS.PIN?handleClockUp:undefined}>
-          {/* v1.2.0: Business name shows subtly above the clock on employee-facing screens. Hidden in admin/setup contexts. */}
-          {businessName&&view!==VIEWS.ADMIN&&view!==VIEWS.SETUP&&(
-            <div style={{fontFamily:"'Outfit',sans-serif",fontSize:fontMin(13),color:"rgba(255,255,255,0.4)",letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:s(6),fontWeight:500}}>{businessName}</div>
-          )}
-          <div style={view===VIEWS.ADMIN?S.timeDisplaySm:S.timeDisplay}>{h}:{m}<span style={view===VIEWS.ADMIN?S.secsSm:S.secs}>{sec}</span><span style={view===VIEWS.ADMIN?S.perSm:S.per}>{p}</span></div>
-          <div style={view===VIEWS.ADMIN?S.dateDisplaySm:S.dateDisplay}>{dateStr}</div>
-        </div>
-
         {/* PIN Entry (includes employee login, admin login, and PIN setup flow) */}
         {(view===VIEWS.PIN||view===VIEWS.ADMIN_LOGIN||view===VIEWS.PIN_SETUP)&&(
           <div style={panelStyle}>
