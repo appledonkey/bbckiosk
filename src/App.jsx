@@ -1390,9 +1390,9 @@ export default function ClockInKiosk() {
   const fontMin = (px) => Math.max(11, s(px));   // text never below 11px (iOS small-text floor)
   const SIZE = {
     touch: { min: touchMin(48), comfortable: touchMin(56), large: touchMin(64), xl: touchMin(72) },
-    font: { xs: fontMin(11), sm: fontMin(14), md: s(16), lg: s(20), xl: s(28), xxl: s(40), display: s(56) },
+    font: { xs: fontMin(11), sm: fontMin(14), md: s(16), lg: s(20), xl: s(28), xxl: s(40), display: s(142) },
     radius: { sm: s(8), md: s(12), lg: s(16) },
-    gap: { xs: s(6), sm: s(8), md: s(14), lg: s(16), xl: s(24), xxl: s(32) },
+    gap: { xs: s(6), sm: s(8), md: s(14), lg: s(16), xl: s(24), xxl: s(96) },
   };
 
   // Styles object — memoized to skip rebuilds when scale doesn't change.
@@ -1411,15 +1411,15 @@ export default function ClockInKiosk() {
     secsSm:{fontSize:s(16),color:"rgba(255,255,255,0.25)",marginLeft:s(3)},
     perSm:{fontSize:fontMin(12),color:"rgba(255,255,255,0.2)",marginLeft:s(4),letterSpacing:"0.1em"},
     dateDisplaySm:{fontFamily:"'Outfit',sans-serif",fontSize:fontMin(12),color:"rgba(255,255,255,0.2)",marginTop:s(4),letterSpacing:"0.02em"},
-    secs:{fontSize:s(22),color:"rgba(255,255,255,0.25)",marginLeft:s(4)},
+    secs:{fontSize:s(56),color:"rgba(255,255,255,0.25)",marginLeft:s(4)},
     per:{fontSize:SIZE.font.md,color:"rgba(255,255,255,0.2)",marginLeft:s(6),letterSpacing:"0.1em"},
     dateDisplay:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.sm,color:"rgba(255,255,255,0.25)",marginTop:s(8),letterSpacing:"0.02em"},
     panel:{width:"100%",display:"flex",flexDirection:"column",alignItems:"center"},
     panelLabel:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.md,fontWeight:500,color:"rgba(255,255,255,0.35)",letterSpacing:"0.25em",textTransform:"uppercase",marginBottom:SIZE.gap.xl},
     pinDots:{display:"flex",gap:s(18),marginBottom:SIZE.gap.xl},
     dot:{width:s(18),height:s(18),borderRadius:"50%",border:"1px solid rgba(255,255,255,0.22)",background:"rgba(255,255,255,0.04)",transition:"all 0.15s ease"},
-    numpad:{display:"grid",gridTemplateColumns:`repeat(3,${touchMin(88)}px)`,gap:s(10),justifyContent:"center"},
-    numKey:{width:touchMin(88),height:touchMin(72),border:"1px solid rgba(255,255,255,0.08)",borderRadius:SIZE.radius.md,background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.85)",fontSize:SIZE.font.xl,fontFamily:"'Outfit',sans-serif",fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.1s ease",outline:"none",touchAction:"manipulation"},
+    numpad:{display:"grid",gridTemplateColumns:`repeat(3,${touchMin(100)}px)`,gap:s(12),justifyContent:"center"},
+    numKey:{width:touchMin(100),height:touchMin(100),border:"1px solid rgba(255,255,255,0.08)",borderRadius:SIZE.radius.md,background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.85)",fontSize:s(36),fontFamily:"'Outfit',sans-serif",fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.1s ease",outline:"none",touchAction:"manipulation"},
     numKeyPressed:{transform:"scale(0.93)",background:"rgba(255,255,255,0.1)"},
     numKeyEmpty:{border:"none",background:"transparent",cursor:"default"},
     numKeyMeta:{fontSize:SIZE.font.lg,color:"rgba(255,255,255,0.3)",border:"1px solid rgba(255,255,255,0.05)"},
@@ -1604,7 +1604,7 @@ export default function ClockInKiosk() {
               {[1,2,3,4,5,6,7,8,9,null,0,"del"].map((key,i)=>{
                 const dis=key===null||isLockedOut||verifying;
                 return <button key={i} style={{...S.numKey,...(key===null?S.numKeyEmpty:{}),...(key==="del"?S.numKeyMeta:{}),...(pressedKey===i&&!dis?S.numKeyPressed:{}),...((isLockedOut||verifying)&&key!==null?{opacity:0.3}:{})}}
-                  onPointerDown={()=>!dis&&setPressedKey(i)} onPointerUp={()=>setPressedKey(null)} onPointerLeave={()=>setPressedKey(null)}
+                  onPointerDown={()=>{if(dis)return;navigator.vibrate?.(10);setPressedKey(i);}} onPointerUp={()=>setPressedKey(null)} onPointerLeave={()=>setPressedKey(null)}
                   onClick={()=>{if(dis)return;if(key==="del")setPin(p=>p.slice(0,-1));else handlePinDigit(String(key));}} disabled={dis}>{key==="del"?(
                     // SVG backspace icon (left-pointing pentagon with X inside) — renders identically across
                     // platforms regardless of font support, stroke matches the regular-weight numerals.
@@ -1687,7 +1687,7 @@ export default function ClockInKiosk() {
                   {[1,2,3,4,5,6,7,8,9,null,0,"del"].map((key,i)=>{
                     const dis=key===null||verifying;
                     return <button key={i} style={{...S.numKey,...(key===null?S.numKeyEmpty:{}),...(key==="del"?S.numKeyMeta:{}),...(pressedKey===i&&!dis?S.numKeyPressed:{}),...(verifying&&key!==null?{opacity:0.3}:{})}}
-                      onPointerDown={()=>!dis&&setPressedKey(i)} onPointerUp={()=>setPressedKey(null)} onPointerLeave={()=>setPressedKey(null)}
+                      onPointerDown={()=>{if(dis)return;navigator.vibrate?.(10);setPressedKey(i);}} onPointerUp={()=>setPressedKey(null)} onPointerLeave={()=>setPressedKey(null)}
                       onClick={()=>{if(dis)return;if(key==="del")setPin(p=>p.slice(0,-1));else handlePinDigit(String(key));}} disabled={dis}>{key==="del"?(
                         <svg width={s(28)} height={s(28)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Delete previous digit">
                           <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
@@ -1726,7 +1726,7 @@ export default function ClockInKiosk() {
                   {[1,2,3,4,5,6,7,8,9,null,0,"del"].map((key,i)=>{
                     const dis=key===null||verifying;
                     return <button key={i} style={{...S.numKey,...(key===null?S.numKeyEmpty:{}),...(key==="del"?S.numKeyMeta:{}),...(pressedKey===i&&!dis?S.numKeyPressed:{}),...(verifying&&key!==null?{opacity:0.3}:{})}}
-                      onPointerDown={()=>!dis&&setPressedKey(i)} onPointerUp={()=>setPressedKey(null)} onPointerLeave={()=>setPressedKey(null)}
+                      onPointerDown={()=>{if(dis)return;navigator.vibrate?.(10);setPressedKey(i);}} onPointerUp={()=>setPressedKey(null)} onPointerLeave={()=>setPressedKey(null)}
                       onClick={()=>{if(dis)return;if(key==="del")setPin(p=>p.slice(0,-1));else handlePinDigit(String(key));}} disabled={dis}>{key==="del"?(
                     // SVG backspace icon (left-pointing pentagon with X inside) — renders identically across
                     // platforms regardless of font support, stroke matches the regular-weight numerals.
