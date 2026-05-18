@@ -23,6 +23,11 @@
         user-select: none;
         -webkit-user-select: none;
       }
+      /* Hide scrollbar chrome on the single scroll surface (S.container). Content still
+         scrolls via touch / wheel; this just removes the chunky Windows/Chrome track so
+         it matches iOS overlay-scrollbar behavior. */
+      * { scrollbar-width: none; -ms-overflow-style: none; }
+      *::-webkit-scrollbar { display: none; width: 0; height: 0; }
     </style>
   </head>
   <body>

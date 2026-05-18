@@ -80,10 +80,10 @@ Vercel auto-deploys `main` branch via GitHub integration. Production URL: `bbcki
 
 ```js
 VIEWS = { PIN, ACTION, SUCCESS, ADMIN, ADMIN_LOGIN, PIN_SETUP, SETUP, RECOVER_PIN }
-SETUP_STEPS = { WELCOME, ADMIN_PIN, ADMIN_PIN_CONFIRM, RECOVERY_CODE, ADD_EMPLOYEE, SHOW_TEMP_PIN }
+SETUP_STEPS = { WELCOME, ADMIN_PIN, ADMIN_PIN_CONFIRM, RECOVERY_CODE, BUSINESS_NAME, ADD_EMPLOYEE, SHOW_TEMP_PIN }
 ```
 
-Wizard order: `WELCOME → ADMIN_PIN → ADMIN_PIN_CONFIRM → RECOVERY_CODE → ADD_EMPLOYEE → SHOW_TEMP_PIN → ADD_EMPLOYEE (loop)`.
+Wizard order: `WELCOME → ADMIN_PIN → ADMIN_PIN_CONFIRM → RECOVERY_CODE → BUSINESS_NAME → ADD_EMPLOYEE → SHOW_TEMP_PIN → ADD_EMPLOYEE (loop)`. `BUSINESS_NAME` is optional (Skip available); resume-on-crash skips it.
 
 `RECOVER_PIN` flow: `enter_code → set_pin → confirm_pin` (sub-stages in `recoverStage` state) → post-recover reveal card → admin.
 

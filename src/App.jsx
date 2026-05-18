@@ -56,7 +56,7 @@ function getScale() {
 }
 
 const VIEWS = { PIN:"pin", ACTION:"action", SUCCESS:"success", ADMIN:"admin", ADMIN_LOGIN:"admin_login", PIN_SETUP:"pin_setup", SETUP:"setup", RECOVER_PIN:"recover_pin" };
-const SETUP_STEPS = { WELCOME:"welcome", ADMIN_PIN:"admin_pin", ADMIN_PIN_CONFIRM:"admin_pin_confirm", RECOVERY_CODE:"recovery_code", ADD_EMPLOYEE:"add_employee", SHOW_TEMP_PIN:"show_temp_pin" };
+const SETUP_STEPS = { WELCOME:"welcome", ADMIN_PIN:"admin_pin", ADMIN_PIN_CONFIRM:"admin_pin_confirm", RECOVERY_CODE:"recovery_code", BUSINESS_NAME:"business_name", ADD_EMPLOYEE:"add_employee", SHOW_TEMP_PIN:"show_temp_pin" };
 // Recovery code character set — A–Z + 2–9, excluding ambiguous 0/O/1/I/L for legibility on hand-written paper.
 const RECOVERY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const RECOVERY_GROUPS = 3;
@@ -907,10 +907,28 @@ export default function ClockInKiosk() {
     }
   };
 
-  // Advance the wizard from the recovery_code step → add_employee step. Called when admin
+  // Advance the wizard from the recovery_code step → business_name step. Called when admin
   // taps "I've Saved It" after seeing the code. Clears the reveal so it's gone forever.
   const wizardAcknowledgeRecovery=async()=>{
     setRecoveryReveal(null);
+    setSetupStep(SETUP_STEPS.BUSINESS_NAME);
+    try{ await window.storage.set(SK.setupState,JSON.stringify({step:SETUP_STEPS.BUSINESS_NAME})); }catch{}
+  };
+
+  // Advance from business_name → add_employee. Optional step: `save=true` persists the typed
+  // name (truncated to 60 chars) if non-empty; `save=false` (Skip) advances without writing.
+  // Either way, business name can still be set/changed later in Admin → Settings.
+  const wizardSetBusinessName=async(save)=>{
+    if(save){
+      const name=businessNameDraft.trim().slice(0,60);
+      if(name){
+        try{
+          await window.storage.set(SK.businessName,name);
+          setBusinessName(name);
+          addAudit("business_name_set",name);
+        }catch(e){console.error(e);}
+      }
+    }
     setSetupStep(SETUP_STEPS.ADD_EMPLOYEE);
     try{ await window.storage.set(SK.setupState,JSON.stringify({step:SETUP_STEPS.ADD_EMPLOYEE})); }catch{}
   };
@@ -1398,11 +1416,11 @@ export default function ClockInKiosk() {
   // Styles object — memoized to skip rebuilds when scale doesn't change.
   // Closes over s/touchMin/fontMin/SIZE from this render via the factory.
   const S = useMemo(() => ({
-    container:{position:"relative",width:"100%",height:"100vh",minHeight:s(600),background:"#0b0b0b",display:"flex",alignItems:"center",justifyContent:"center",overflow:"auto",userSelect:"none",fontFamily:"'Outfit',sans-serif",fontVariantNumeric:"tabular-nums",color:"rgba(255,255,255,0.85)"},
+    container:{position:"relative",width:"100%",height:"100vh",minHeight:s(600),background:"#0b0b0b",display:"flex",overflow:"auto",WebkitOverflowScrolling:"touch",userSelect:"none",fontFamily:"'Outfit',sans-serif",fontVariantNumeric:"tabular-nums",color:"rgba(255,255,255,0.85)"},
     grain:{position:"fixed",inset:0,opacity:0.025,backgroundImage:`url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,backgroundSize:"128px 128px",pointerEvents:"none"},
     // Panel maxWidth: viewport-aware. Floors at the raw 480px design width so phone viewports
     // don't shrink the panel to a tiny card, caps via 100vw-gutter so we never overflow.
-    inner:{display:"flex",flexDirection:"column",alignItems:"center",gap:SIZE.gap.xxl,padding:`${s(40)}px ${s(20)}px`,width:"100%",maxWidth:`min(${Math.max(480,s(480))}px, calc(100vw - ${s(24)}px))`,zIndex:1,transition:"transform 2s ease"},
+    inner:{display:"flex",flexDirection:"column",alignItems:"center",gap:SIZE.gap.xxl,padding:`${s(40)}px ${s(20)}px`,margin:"auto",width:"100%",maxWidth:`min(${Math.max(480,s(480))}px, calc(100vw - ${s(24)}px))`,zIndex:1,transition:"transform 2s ease"},
     clockHeader:{textAlign:"center",cursor:"default",touchAction:"manipulation"},
     // Employee-facing clock at 500 weight: visible at distance under fluorescent / window glare without going as heavy as 600.
     timeDisplay:{fontFamily:"'Outfit',sans-serif",fontSize:SIZE.font.display,fontWeight:500,color:"rgba(255,255,255,0.88)",letterSpacing:"-0.02em",lineHeight:1},
@@ -1597,9 +1615,12 @@ export default function ClockInKiosk() {
                 ):"Enter your PIN"}
             </div>
             <div style={S.pinDots}>{[0,1,2,3,4,5].map(i=>(<div key={i} style={{...S.dot,...(i<pin.length?{background:"rgba(255,255,255,0.9)",boxShadow:"0 0 8px rgba(255,255,255,0.15)"}:{})}}/>))}</div>
-            {message&&<div style={{...S.toast,color:message.type==="error"?"#e05555":"#4a9"}}>{message.text}</div>}
-            {verifying&&<div style={{...S.toast,color:"rgba(255,255,255,0.4)"}}>Verifying…</div>}
-            {isLockedOut&&<div style={S.lockout}>Locked — try again in {lockoutCountdown}s</div>}
+            {/* Reserved feedback slot — fixed height so error/verifying/lockout messages don't shift the keypad below. */}
+            <div style={{minHeight:s(72),marginBottom:SIZE.gap.lg,display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center",gap:s(4),width:"100%"}}>
+              {message&&<div style={{...S.toast,marginBottom:0,color:message.type==="error"?"#e05555":"#4a9"}}>{message.text}</div>}
+              {verifying&&<div style={{...S.toast,marginBottom:0,color:"rgba(255,255,255,0.4)"}}>Verifying…</div>}
+              {isLockedOut&&<div style={{...S.lockout,marginBottom:0}}>Locked — try again in {lockoutCountdown}s</div>}
+            </div>
             <div style={S.numpad}>
               {[1,2,3,4,5,6,7,8,9,null,0,"del"].map((key,i)=>{
                 const dis=key===null||isLockedOut||verifying;
@@ -1657,9 +1678,11 @@ export default function ClockInKiosk() {
               <>
                 <div style={S.panelLabel}>Recover Admin PIN</div>
                 <div style={{...S.revealHelp,marginBottom:s(20)}}>Enter the recovery code you saved when you first set up the kiosk.</div>
-                {message&&<div style={{...S.toast,color:message.type==="error"?"#e05555":"#4a9"}}>{message.text}</div>}
-                {verifying&&<div style={{...S.toast,color:"rgba(255,255,255,0.4)"}}>Verifying…</div>}
-                {isLockedOut&&<div style={S.lockout}>Locked — try again in {lockoutCountdown}s</div>}
+                <div style={{minHeight:s(72),marginBottom:SIZE.gap.lg,display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center",gap:s(4),width:"100%"}}>
+                  {message&&<div style={{...S.toast,marginBottom:0,color:message.type==="error"?"#e05555":"#4a9"}}>{message.text}</div>}
+                  {verifying&&<div style={{...S.toast,marginBottom:0,color:"rgba(255,255,255,0.4)"}}>Verifying…</div>}
+                  {isLockedOut&&<div style={{...S.lockout,marginBottom:0}}>Locked — try again in {lockoutCountdown}s</div>}
+                </div>
                 <input
                   style={{...S.noteInput,textAlign:"center",letterSpacing:"0.18em",fontFamily:"'Outfit',sans-serif",fontSize:s(18),fontWeight:500}}
                   placeholder="XXXX-XXXX-XXXX"
@@ -1681,8 +1704,10 @@ export default function ClockInKiosk() {
                 <div style={{...S.empName,marginBottom:SIZE.gap.md}}>Admin</div>
                 <div style={S.panelLabel}>{recoverStage==="set_pin"?"Set new admin PIN":"Confirm new admin PIN"}</div>
                 <div style={S.pinDots}>{[0,1,2,3,4,5].map(i=>(<div key={i} style={{...S.dot,...(i<pin.length?{background:"rgba(255,255,255,0.9)",boxShadow:"0 0 8px rgba(255,255,255,0.15)"}:{})}}/>))}</div>
-                {message&&<div style={{...S.toast,color:message.type==="error"?"#e05555":"#4a9"}}>{message.text}</div>}
-                {verifying&&<div style={{...S.toast,color:"rgba(255,255,255,0.4)"}}>Saving…</div>}
+                <div style={{minHeight:s(72),marginBottom:SIZE.gap.lg,display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center",gap:s(4),width:"100%"}}>
+                  {message&&<div style={{...S.toast,marginBottom:0,color:message.type==="error"?"#e05555":"#4a9"}}>{message.text}</div>}
+                  {verifying&&<div style={{...S.toast,marginBottom:0,color:"rgba(255,255,255,0.4)"}}>Saving…</div>}
+                </div>
                 <div style={S.numpad}>
                   {[1,2,3,4,5,6,7,8,9,null,0,"del"].map((key,i)=>{
                     const dis=key===null||verifying;
@@ -1707,7 +1732,7 @@ export default function ClockInKiosk() {
 
         {/* First-run wizard */}
         {view===VIEWS.SETUP&&(
-          <div style={{...panelStyle,maxHeight:"85vh",overflowY:"auto"}}>
+          <div style={panelStyle}>
             {setupStep===SETUP_STEPS.WELCOME&&(
               <>
                 <div style={S.empName}>Kiosk Setup</div>
@@ -1761,6 +1786,21 @@ export default function ClockInKiosk() {
               </>
             )}
 
+            {setupStep===SETUP_STEPS.BUSINESS_NAME&&(
+              <>
+                <div style={S.empName}>Name your kiosk</div>
+                <div style={{...S.sectionLabel,justifyContent:"center",marginBottom:s(16)}}>Optional</div>
+                <div style={{fontSize:fontMin(13),color:"rgba(255,255,255,0.55)",lineHeight:1.5,maxWidth:s(340),margin:`0 auto ${s(20)}px`,textAlign:"center"}}>
+                  Shown above the clock on the kiosk screen and as the browser tab title. You can change this anytime in Admin → Settings.
+                </div>
+                <div style={{width:"100%",display:"flex",flexDirection:"column",gap:s(12),marginTop:s(4)}}>
+                  <input style={{...S.adminInput,fontSize:s(16),padding:`${s(14)}px ${s(16)}px`}} placeholder="e.g. Acme Plumbing" value={businessNameDraft} maxLength={60} autoFocus onChange={e=>setBusinessNameDraft(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter"&&businessNameDraft.trim()) wizardSetBusinessName(true); }}/>
+                  <button style={{...S.btnInLg,opacity:!businessNameDraft.trim()?0.4:1,cursor:!businessNameDraft.trim()?"default":"pointer"}} disabled={!businessNameDraft.trim()} onClick={()=>wizardSetBusinessName(true)}>Save and Continue</button>
+                  <button style={S.linkBtn} onClick={()=>wizardSetBusinessName(false)}>Skip</button>
+                </div>
+              </>
+            )}
+
             {setupStep===SETUP_STEPS.ADD_EMPLOYEE&&(
               <>
                 <div style={S.empName}>{employees.length===0?"Add Your First Employee":"Add Another Employee"}</div>
@@ -1790,7 +1830,7 @@ export default function ClockInKiosk() {
 
         {/* Action Screen */}
         {view===VIEWS.ACTION&&currentEmployee&&(
-          <div style={{...panelStyle,maxHeight:"85vh",overflowY:"auto"}}>
+          <div style={panelStyle}>
             <div style={S.empName}>{currentEmployee.name}</div>
             <div style={S.statusBadge}>
               <div style={{...S.statusDot,background:getStatus(currentEmployee.id)==="clocked_in"?"#4a9":"#666"}}/>
@@ -1842,7 +1882,7 @@ export default function ClockInKiosk() {
                   <span>Pay Period</span>
                   <span style={{fontFamily:"'Outfit',sans-serif",color:"rgba(255,255,255,0.85)",fontSize:fontMin(14),letterSpacing:"0.02em",textTransform:"none",fontWeight:400}}>{empPeriodHours.hrs}h {empPeriodHours.mins}m{empPeriodHours.openShift?<span style={{color:"#4a9",marginLeft:s(6)}}>● active</span>:""}</span>
                 </div>
-                <div style={{maxHeight:s(200),overflowY:"auto"}}>
+                <div>
                   {empPeriodEntries.map(e=>(
                     <div key={e.id} style={{...S.logRow,fontSize:fontMin(12)}}>
                       <span style={{color:"rgba(255,255,255,0.3)",width:s(50)}}>{fmtDate(e.timestamp)}</span>
@@ -1888,7 +1928,7 @@ export default function ClockInKiosk() {
 
         {/* Admin */}
         {view===VIEWS.ADMIN&&(
-          <div style={{...panelStyle,maxHeight:"80vh",overflowY:"auto",paddingBottom:20}}>
+          <div style={{...panelStyle,paddingBottom:20}}>
             {storageWarning&&!storageWarningDismissed&&(
               <div style={{display:"flex",alignItems:"center",gap:s(10),padding:`${s(10)}px ${s(12)}px`,marginBottom:s(12),background:"rgba(224,153,85,0.08)",border:"1px solid rgba(224,153,85,0.3)",borderRadius:SIZE.radius.sm,fontSize:fontMin(12),color:"#e09955"}}>
                 <span style={{flex:1}}>Storage is nearly full — export a backup and archive old entries.</span>
@@ -2257,7 +2297,7 @@ export default function ClockInKiosk() {
                     <div style={S.emptyHint}>Missed clock-outs, long shifts, manual entries, and corrections will appear here.</div>
                   </div>
                 ):(
-                  <div style={{maxHeight:s(360),overflowY:"auto"}}>
+                  <div>
                     {exceptions.slice(0,50).map((exc,i)=>{
                       const accent =
                         exc.type==="missed_out"?"#e05555":
@@ -2326,7 +2366,7 @@ export default function ClockInKiosk() {
                 {/* Audit Log */}
                 <SectionHead label="Audit Log" badge={auditLog.length} open={showAudit} onClick={()=>setShowAudit(!showAudit)}/>
                 {showAudit&&(
-                  <div style={{...S.empList,maxHeight:s(300),overflowY:"auto",marginTop:s(8)}}>
+                  <div style={{...S.empList,marginTop:s(8)}}>
                     {auditLog.length===0?<div style={S.emptyText}>No audit entries</div>:
                       [...auditLog].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp)).slice(0,50).map(a=>(
                         <div key={a.id} style={{...S.logRow,fontSize:fontMin(11)}}>
