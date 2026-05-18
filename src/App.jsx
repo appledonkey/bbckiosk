@@ -1861,6 +1861,11 @@ export default function ClockInKiosk() {
                   onClick={confirmAction}>
                   Confirm {pendingAction==="in"?"Clock In":"Clock Out"}
                 </button>
+                {(pendingAction==="out"&&!selectedReason)&&(
+                  <div style={{fontSize:fontMin(12),color:"rgba(255,255,255,0.55)",textAlign:"center",marginTop:s(10),fontFamily:"'Outfit',sans-serif",letterSpacing:"0.04em"}}>
+                    Tap a reason above to enable
+                  </div>
+                )}
               </div>
             )}
 
@@ -2250,9 +2255,11 @@ export default function ClockInKiosk() {
                   <table style={{borderCollapse:"collapse",width:"100%",fontSize:fontMin(11),fontFamily:"'Outfit',sans-serif"}}>
                     <thead>
                       <tr>
-                        <th style={S.th}>Name</th>
+                        {/* Sticky Name column header — left-anchored so it stays visible during horizontal scroll. */}
+                        <th style={{...S.th,position:"sticky",left:0,zIndex:2,background:"#0b0b0b",minWidth:s(120),textAlign:"left",paddingLeft:s(6)}}>Name</th>
                         {payDays.map(d=>{const dt=new Date(d+"T12:00:00"); return <th key={d} style={S.th}>{dt.getDate()}<br/><span style={{fontWeight:300,fontSize:fontMin(10)}}>{DAY_LABELS[dt.getDay()]}</span></th>;})}
-                        <th style={{...S.th,color:"rgba(255,255,255,0.55)"}}>Total</th>
+                        {/* Sticky Total column header — right-anchored. */}
+                        <th style={{...S.th,position:"sticky",right:0,zIndex:2,background:"#0b0b0b",color:"rgba(255,255,255,0.55)"}}>Total</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2261,14 +2268,19 @@ export default function ClockInKiosk() {
                         if(!data) return null;
                         const total=data.total;
                         const weeklyOT=total.ms>40*3600000;
-                        const rowBg=rowIdx%2===1?"rgba(255,255,255,0.02)":"transparent";
+                        // Solid (opaque) row bg so the sticky Name + Total cells visually cover scrolling day cells beneath them.
+                        const rowBgSolid=rowIdx%2===1?"#101010":"#0b0b0b";
+                        const totalBgSolid=weeklyOT?(rowIdx%2===1?"#1a0d0d":"#170c0c"):(rowIdx%2===1?"#161616":"#111111");
                         return (
-                          <tr key={emp.id} style={{background:rowBg}}>
-                            <td style={{...S.td,color:"rgba(255,255,255,0.7)",textAlign:"left",fontFamily:"'Outfit',sans-serif"}}>{emp.name}</td>
+                          <tr key={emp.id} style={{background:rowBgSolid}}>
+                            {/* Sticky Name cell — one-line ellipsis so long names don't wrap the row. */}
+                            <td style={{...S.td,color:"rgba(255,255,255,0.7)",textAlign:"left",fontFamily:"'Outfit',sans-serif",position:"sticky",left:0,zIndex:1,background:rowBgSolid,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:s(160),paddingLeft:s(6)}}>{emp.name}</td>
                             {payDays.map(d=>{
                               const cell=data.days[d];
                               if(!cell) return <td key={d} style={S.td}>—</td>;
-                              if(cell.off) return <td key={d} style={{...S.td,color:"rgba(255,255,255,0.1)"}}>OFF</td>;
+                              // Quiet "·" instead of "OFF" — reduces visual noise on the rows where most days are off,
+                              // letting the eye snap to days that actually have hours.
+                              if(cell.off) return <td key={d} style={{...S.td,color:"rgba(255,255,255,0.18)"}}>·</td>;
                               const hasOpen=cell.openShift;
                               const missingPunch=entries.filter(e=>e.employeeId===emp.id&&e.date===d).length%2!==0;
                               return <td key={d} style={{...S.td,...(cell.hrs>=8?{color:"#e09955"}:{}),...(missingPunch?{color:"#e05555"}:{})}}>
@@ -2276,7 +2288,7 @@ export default function ClockInKiosk() {
                                 {hasOpen&&"*"}{missingPunch&&"⚠"}
                               </td>;
                             })}
-                            <td style={{...S.td,fontWeight:600,color:weeklyOT?"#e05555":"rgba(255,255,255,0.9)",background:weeklyOT?"rgba(224,85,85,0.06)":"rgba(255,255,255,0.03)"}}>{total.hrs}:{total.mins.toString().padStart(2,"0")}{weeklyOT&&" OT"}</td>
+                            <td style={{...S.td,fontWeight:600,color:weeklyOT?"#e05555":"rgba(255,255,255,0.9)",position:"sticky",right:0,zIndex:1,background:totalBgSolid}}>{total.hrs}:{total.mins.toString().padStart(2,"0")}{weeklyOT&&" OT"}</td>
                           </tr>
                         );
                       })}
